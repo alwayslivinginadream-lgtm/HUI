@@ -62,6 +62,7 @@ DEFAULT_CONFIG = {
     "max_holding_hours": 20,
     "causal_enabled": True,
     "causal_effect_threshold": -0.01,
+    "causal_warmup_evals": 200,           # 冷启动：前200次评估跳过因果门控
     "causal_effect_threshold_base": 0.005,
     "causal_feedback_alpha": 0.15,
     "causal_blend_weight": 0.45,
@@ -2097,6 +2098,7 @@ class CausalDecisionEngine:
         self.config = config
         self.causal_estimator = causal_estimator
         self.offline_causal_model = offline_causal_model
+        self._eval_count = 0  # 冷启动计数器
 
     def _compute_execution(self, state, buy_prob, metrics, profile):
         confidence = min(1.0, abs(buy_prob - 0.5) * 2)
@@ -2354,7 +2356,10 @@ class CausalDecisionEngine:
         if cost_block_reason:
             decision["reason"] = cost_block_reason
             return decision
-        if causal_enabled and causal_effect < dynamic_causal_threshold:
+        # 冷启动保护：前200次评估放宽因果门槛，让系统先积累数据
+        self._eval_count += 1
+        causal_warmup = self._eval_count < int(self.config.get("causal_warmup_evals", 200))
+        if causal_enabled and not causal_warmup and causal_effect < dynamic_causal_threshold:
             decision["reason"] = "因果效应不足"
             return decision
         if opportunity_score < profile["min_score"]:
