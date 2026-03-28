@@ -6341,65 +6341,65 @@ class BotGUI:
         except:
             self.config['max_active_symbols'] = int(DEFAULT_CONFIG.get('max_active_symbols', 2))
         try:
-            self.config['max_portfolio_var'] = max(0.01, min(0.08, float(self.ent_max_var.get().strip())))
-        except:
             self.config['max_portfolio_var'] = float(DEFAULT_CONFIG.get('max_portfolio_var', 0.04))
-        try:
-            self.config['funding_rate_threshold'] = max(0.00005, min(0.002, float(self.ent_funding_th.get().strip())))
         except:
+            pass
+        try:
             self.config['funding_rate_threshold'] = float(DEFAULT_CONFIG.get('funding_rate_threshold', 0.00025))
-        try:
-            self.config['style_var_scale'] = max(0.5, min(5.0, float(self.ent_style_var_scale.get().strip())))
         except:
+            pass
+        try:
             self.config['style_var_scale'] = float(DEFAULT_CONFIG.get('style_var_scale', 1.8))
-        try:
-            self.config['runtime_target_orders_per_hour'] = max(0.5, min(40.0, float(self.ent_runtime_orders.get().strip())))
         except:
+            pass
+        try:
             self.config['runtime_target_orders_per_hour'] = float(DEFAULT_CONFIG.get('runtime_target_orders_per_hour', 4.5))
-        try:
-            self.config['execution_market_confidence'] = max(0.5, min(0.95, float(self.ent_market_conf.get().strip())))
         except:
+            pass
+        try:
             self.config['execution_market_confidence'] = float(DEFAULT_CONFIG.get('execution_market_confidence', 0.86))
-        try:
-            self.config['execution_aggressive_confidence'] = max(0.45, min(0.9, float(self.ent_aggr_conf.get().strip())))
         except:
+            pass
+        try:
             self.config['execution_aggressive_confidence'] = float(DEFAULT_CONFIG.get('execution_aggressive_confidence', 0.67))
-        try:
-            self.config['random_skip_rate'] = max(0.0, min(0.25, float(self.ent_random_skip.get().strip())))
         except:
+            pass
+        try:
             self.config['random_skip_rate'] = float(DEFAULT_CONFIG.get('random_skip_rate', 0.03))
-        try:
-            self.config['scheduler_skip_prob'] = max(0.0, min(0.3, float(self.ent_scheduler_skip.get().strip())))
         except:
+            pass
+        try:
             self.config['scheduler_skip_prob'] = float(DEFAULT_CONFIG.get('scheduler_skip_prob', 0.03))
-        try:
-            self.config['max_slippage_alarm'] = max(0.0001, min(0.02, float(self.ent_slip_alarm.get().strip())))
         except:
+            pass
+        try:
             self.config['max_slippage_alarm'] = float(DEFAULT_CONFIG.get('max_slippage_alarm', 0.0018))
-        try:
-            self.config['recovery_budget_ratio'] = max(0.0, min(0.4, float(self.ent_recovery_budget.get().strip())))
         except:
+            pass
+        try:
             self.config['recovery_budget_ratio'] = float(DEFAULT_CONFIG.get('recovery_budget_ratio', 0.15))
-        try:
-            self.config['recovery_daily_target_pct'] = max(0.0, min(0.03, float(self.ent_recovery_target.get().strip())))
         except:
+            pass
+        try:
             self.config['recovery_daily_target_pct'] = float(DEFAULT_CONFIG.get('recovery_daily_target_pct', 0.004))
-        try:
-            self.config['recovery_max_boost'] = max(0.0, min(0.8, float(self.ent_recovery_boost.get().strip())))
         except:
+            pass
+        try:
             self.config['recovery_max_boost'] = float(DEFAULT_CONFIG.get('recovery_max_boost', 0.45))
-        try:
-            self.config['orderbook_confirm_ticks'] = max(1, min(12, int(self.ent_ob_confirm_ticks.get().strip())))
         except:
+            pass
+        try:
             self.config['orderbook_confirm_ticks'] = int(DEFAULT_CONFIG.get('orderbook_confirm_ticks', 3))
-        try:
-            self.config['stop_confirm_window_sec'] = max(0.0, min(30.0, float(self.ent_stop_confirm_sec.get().strip())))
         except:
+            pass
+        try:
             self.config['stop_confirm_window_sec'] = float(DEFAULT_CONFIG.get('stop_confirm_window_sec', 6))
-        try:
-            self.config['mode_min_dwell_sec'] = max(60, min(21600, int(self.ent_mode_dwell_sec.get().strip())))
         except:
+            pass
+        try:
             self.config['mode_min_dwell_sec'] = int(DEFAULT_CONFIG.get('mode_min_dwell_sec', 900))
+        except:
+            pass
         style_choice = self.cmb_style.get().strip()
         if style_choice in ["自动", "保守", "均衡", "激进"]:
             self.config['strategy_style'] = style_choice
@@ -6743,9 +6743,9 @@ class BotGUI:
         self.lbl_causal_threshold.pack(fill="x", padx=8, pady=(0,5))
         causal_note = tk.Label(fr_causal, text="阈值已从0.05降至-0.01，允许轻微负因果也能开单", bg=BG, fg="#6a7090", font=("Consolas",8))
         causal_note.pack(anchor="w", padx=10, pady=(0,5))
-        # ========== Tab3: 高级调参 ==========
+        # ========== Tab3: 学习进度 ==========
         tab3 = tk.Frame(nb, bg=BG)
-        nb.add(tab3, text=" 🔧 高级调参 ")
+        nb.add(tab3, text=" 📊 学习进度 ")
         t3_canvas = tk.Canvas(tab3, bg=BG, highlightthickness=0)
         t3_sb = ttk.Scrollbar(tab3, orient="vertical", command=t3_canvas.yview)
         t3_inner = tk.Frame(t3_canvas, bg=BG)
@@ -6756,46 +6756,73 @@ class BotGUI:
         t3_canvas.pack(side="left", fill="both", expand=True)
         t3_sb.pack(side="right", fill="y")
 
-        # 风格预设
-        fr_preset = ttk.LabelFrame(t3_inner, text="风格预设（一键切换）")
-        fr_preset.pack(fill="x", pady=5, padx=8)
-        preset_row = tk.Frame(fr_preset, bg=BG)
-        preset_row.pack(fill="x", padx=5, pady=5)
-        ttk.Button(preset_row, text="🛡 保守", command=lambda: self.apply_risk_preset("conservative")).pack(side="left", padx=4)
-        ttk.Button(preset_row, text="⚖ 均衡", command=lambda: self.apply_risk_preset("balanced")).pack(side="left", padx=4)
-        ttk.Button(preset_row, text="🔥 激进", command=lambda: self.apply_risk_preset("aggressive")).pack(side="left", padx=4)
-        ttk.Button(preset_row, text="💀 狂暴", command=lambda: self.apply_risk_preset("furious")).pack(side="left", padx=4)
+        # ---- MAB入场学习 ----
+        fr_mab_progress = ttk.LabelFrame(t3_inner, text="🎰 MAB入场引擎 (强化学习)")
+        fr_mab_progress.pack(fill="x", pady=5, padx=8)
+        mab_inner = tk.Frame(fr_mab_progress, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        mab_inner.pack(fill="x", padx=5, pady=5)
+        self.lbl_mab_total = tk.Label(mab_inner, text="总样本: 0/100单  [阶段: 探索期]", bg=PANEL, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self.lbl_mab_total.pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_mab_mode0 = tk.Label(mab_inner, text="  市价即入:    0次 | 奖励: 0.00 | UCB: 0.00", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_mab_mode0.pack(anchor="w", padx=8)
+        self.lbl_mab_mode1 = tk.Label(mab_inner, text="  ATR回撤:    0次 | 奖励: 0.00 | UCB: 0.00", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_mab_mode1.pack(anchor="w", padx=8)
+        self.lbl_mab_mode2 = tk.Label(mab_inner, text="  支撑阻力:   0次 | 奖励: 0.00 | UCB: 0.00", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_mab_mode2.pack(anchor="w", padx=8)
+        self.lbl_mab_mode3 = tk.Label(mab_inner, text="  分批确认:   0次 | 奖励: 0.00 | UCB: 0.00", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_mab_mode3.pack(anchor="w", padx=8, pady=(0,5))
 
-        # 风控参数
-        fr_risk = ttk.LabelFrame(t3_inner, text="风控参数")
-        fr_risk.pack(fill="x", pady=5, padx=8)
-        self.ent_max_var = self.create_entry(fr_risk, "最大VaR:", str(self.config.get('max_portfolio_var',0.04)))
-        self.ent_funding_th = self.create_entry(fr_risk, "费率阈值:", str(self.config.get('funding_rate_threshold',0.00025)))
-        self.ent_style_var_scale = self.create_entry(fr_risk, "风格VaR系数:", str(self.config.get('style_var_scale',1.8)))
+        # ---- ML预测器 ----
+        fr_ml_progress = ttk.LabelFrame(t3_inner, text="🧠 ML预测器 (12维在线学习)")
+        fr_ml_progress.pack(fill="x", pady=5, padx=8)
+        ml_inner = tk.Frame(fr_ml_progress, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        ml_inner.pack(fill="x", padx=5, pady=5)
+        self.lbl_ml_accuracy = tk.Label(ml_inner, text="准确率: --% | 样本: 0/100 | 阶段: 未启动", bg=PANEL, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self.lbl_ml_accuracy.pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_ml_weights = tk.Label(ml_inner, text="  特征权重: 等待学习数据...", bg=PANEL, fg=FG, font=("Consolas", 9), wraplength=600, justify="left")
+        self.lbl_ml_weights.pack(anchor="w", padx=8, pady=(0,5))
 
-        # 执行参数
-        fr_exec = ttk.LabelFrame(t3_inner, text="执行参数")
-        fr_exec.pack(fill="x", pady=5, padx=8)
-        self.ent_runtime_orders = self.create_entry(fr_exec, "目标单/小时:", str(self.config.get('runtime_target_orders_per_hour',4.5)))
-        self.ent_market_conf = self.create_entry(fr_exec, "市价置信:", str(self.config.get('execution_market_confidence',0.86)))
-        self.ent_aggr_conf = self.create_entry(fr_exec, "激进置信:", str(self.config.get('execution_aggressive_confidence',0.67)))
-        self.ent_random_skip = self.create_entry(fr_exec, "随机跳过:", str(self.config.get('random_skip_rate',0.03)))
-        self.ent_scheduler_skip = self.create_entry(fr_exec, "调度跳过:", str(self.config.get('scheduler_skip_prob',0.03)))
-        self.ent_slip_alarm = self.create_entry(fr_exec, "滑点告警:", str(self.config.get('max_slippage_alarm',0.0018)))
+        # ---- 因果引擎 ----
+        fr_causal_progress = ttk.LabelFrame(t3_inner, text="⚖️ 因果推理引擎")
+        fr_causal_progress.pack(fill="x", pady=5, padx=8)
+        causal_p_inner = tk.Frame(fr_causal_progress, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        causal_p_inner.pack(fill="x", padx=5, pady=5)
+        self.lbl_causal_stats = tk.Label(causal_p_inner, text="通过率: --% | 通过: 0 | 拦截: 0 | 当前阈值: -0.01", bg=PANEL, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self.lbl_causal_stats.pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_causal_recent = tk.Label(causal_p_inner, text="  最近因果值: 等待数据...", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_causal_recent.pack(anchor="w", padx=8, pady=(0,5))
 
-        # 恢复参数
-        fr_recovery = ttk.LabelFrame(t3_inner, text="恢复参数")
-        fr_recovery.pack(fill="x", pady=5, padx=8)
-        self.ent_recovery_budget = self.create_entry(fr_recovery, "恢复预算占比:", str(self.config.get('recovery_budget_ratio',0.15)))
-        self.ent_recovery_target = self.create_entry(fr_recovery, "日恢复目标:", str(self.config.get('recovery_daily_target_pct',0.004)))
-        self.ent_recovery_boost = self.create_entry(fr_recovery, "恢复最大放大:", str(self.config.get('recovery_max_boost',0.45)))
+        # ---- 贝叶斯融合 ----
+        fr_bayes_progress = ttk.LabelFrame(t3_inner, text="🔮 贝叶斯策略融合")
+        fr_bayes_progress.pack(fill="x", pady=5, padx=8)
+        bayes_inner = tk.Frame(fr_bayes_progress, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        bayes_inner.pack(fill="x", padx=5, pady=5)
+        self.lbl_bayes_weights = tk.Label(bayes_inner, text="趋势: 30% | ML: 25% | 订单簿: 25% | 情绪: 20%", bg=PANEL, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self.lbl_bayes_weights.pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_bayes_samples = tk.Label(bayes_inner, text="  融合样本: 0 | 阶段: 初始化", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_bayes_samples.pack(anchor="w", padx=8, pady=(0,5))
 
-        # 微调参数
-        fr_micro = ttk.LabelFrame(t3_inner, text="微调参数")
-        fr_micro.pack(fill="x", pady=5, padx=8)
-        self.ent_ob_confirm_ticks = self.create_entry(fr_micro, "盘口确认tick:", str(self.config.get('orderbook_confirm_ticks',3)))
-        self.ent_stop_confirm_sec = self.create_entry(fr_micro, "止损确认秒:", str(self.config.get('stop_confirm_window_sec',6)))
-        self.ent_mode_dwell_sec = self.create_entry(fr_micro, "模式驻留秒:", str(self.config.get('mode_min_dwell_sec',900)))
+        # ---- 进化引擎 ----
+        fr_evo_progress = ttk.LabelFrame(t3_inner, text="🧬 进化引擎 (遗传算法)")
+        fr_evo_progress.pack(fill="x", pady=5, padx=8)
+        evo_inner = tk.Frame(fr_evo_progress, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        evo_inner.pack(fill="x", padx=5, pady=5)
+        self.lbl_evo_gen = tk.Label(evo_inner, text="当前代数: 0 | 最优适应度: -- | 下次进化: --", bg=PANEL, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self.lbl_evo_gen.pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_evo_params = tk.Label(evo_inner, text="  最优参数: 等待进化...", bg=PANEL, fg=FG, font=("Consolas", 9), wraplength=600, justify="left")
+        self.lbl_evo_params.pack(anchor="w", padx=8, pady=(0,5))
+
+        # ---- 交易统计 ----
+        fr_trade_stats = ttk.LabelFrame(t3_inner, text="📈 实时交易统计")
+        fr_trade_stats.pack(fill="x", pady=5, padx=8)
+        stats_inner = tk.Frame(fr_trade_stats, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        stats_inner.pack(fill="x", padx=5, pady=5)
+        self.lbl_trade_total = tk.Label(stats_inner, text="总交易: 0 | 盈利: 0 | 亏损: 0 | 胜率: --%", bg=PANEL, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self.lbl_trade_total.pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_trade_exits = tk.Label(stats_inner, text="  止盈:0 | trail:0 | ML退出:0 | 保本:0 | 止损:0 | 超时:0", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_trade_exits.pack(anchor="w", padx=8)
+        self.lbl_trade_pnl = tk.Label(stats_inner, text="  累计盈亏: 0.00 USDT | 今日: 0.00 USDT", bg=PANEL, fg=FG, font=("Consolas", 9))
+        self.lbl_trade_pnl.pack(anchor="w", padx=8, pady=(0,5))
         # ========== Tab4: 监控日志 ==========
         tab4 = tk.Frame(nb, bg=BG)
         nb.add(tab4, text=" 📈 监控日志 ")
@@ -6835,6 +6862,147 @@ class BotGUI:
         self.tree_holdings.pack(fill="x", padx=4, pady=4)
         self.lbl_holdings_summary = tk.Label(hold_frame, text="汇总: 持仓币种 0 | 总未实现盈亏 +0.0000U", anchor="w", bg=BG, fg=FG)
         self.lbl_holdings_summary.pack(fill="x", padx=6, pady=(0,4))
+
+    def _start_learning_refresh(self):
+        """每5秒刷新学习进度面板"""
+        if not self.running:
+            return
+        try:
+            self._update_learning_panel()
+        except Exception:
+            pass
+        self.root.after(5000, self._start_learning_refresh)
+
+    def _update_learning_panel(self):
+        """更新Tab3学习进度面板"""
+        # ---- MAB ----
+        try:
+            with self.strategies_lock:
+                strategies = list(self.strategies.values())
+            mab_counts = [0, 0, 0, 0]
+            mab_rewards = [0.0, 0.0, 0.0, 0.0]
+            for s in strategies:
+                if hasattr(s, 'adaptive_entry') and s.adaptive_entry:
+                    ae = s.adaptive_entry
+                    for i in range(min(4, len(ae.counts))):
+                        mab_counts[i] += ae.counts[i]
+                        mab_rewards[i] += ae.rewards[i]
+            total_mab = sum(mab_counts)
+            phase = "探索期" if total_mab < 30 else ("学习中" if total_mab < 100 else "✅ 已稳定")
+            self.lbl_mab_total.config(text=f"总样本: {total_mab}/100单  [阶段: {phase}]")
+            mode_names = ["市价即入", "ATR回撤", "支撑阻力", "分批确认"]
+            labels = [self.lbl_mab_mode0, self.lbl_mab_mode1, self.lbl_mab_mode2, self.lbl_mab_mode3]
+            for i, (lbl, name) in enumerate(zip(labels, mode_names)):
+                avg_r = mab_rewards[i] / max(1, mab_counts[i])
+                ucb = avg_r + (2 * math.log(max(1, total_mab)) / max(1, mab_counts[i])) ** 0.5 if total_mab > 0 else 0
+                lbl.config(text=f"  {name}:  {mab_counts[i]:>3}次 | 奖励: {avg_r:>+.2f} | UCB: {ucb:.2f}")
+        except Exception:
+            pass
+
+        # ---- ML ----
+        try:
+            for s in strategies:
+                if hasattr(s, 'ml_predictor') and s.ml_predictor:
+                    ml = s.ml_predictor
+                    acc = ml.get_accuracy() if hasattr(ml, 'get_accuracy') else 0
+                    samples = getattr(ml, 'sample_count', 0)
+                    phase = "未启动" if samples == 0 else ("学习中" if samples < 100 else "✅ 已稳定")
+                    self.lbl_ml_accuracy.config(text=f"准确率: {acc:.0%} | 样本: {samples}/100 | 阶段: {phase}")
+                    if hasattr(ml, 'weights') and ml.weights is not None:
+                        feat_names = ["动量短","动量中","动量差","波动比","ATR归一","布林","MA交叉","偏度","连胜","RSI","ROC","MACD"]
+                        w = ml.weights
+                        w_str = " | ".join(f"{feat_names[i]}:{w[i]:+.2f}" for i in range(min(len(feat_names), len(w))))
+                        self.lbl_ml_weights.config(text=f"  权重: {w_str}")
+                    break
+        except Exception:
+            pass
+
+        # ---- 因果 ----
+        try:
+            causal_pass = 0
+            causal_block = 0
+            recent_causals = []
+            for s in strategies:
+                if hasattr(s, 'runtime_causal_pass_count'):
+                    causal_pass += getattr(s, 'runtime_causal_pass_count', 0)
+                    causal_block += getattr(s, 'runtime_causal_block_count', 0)
+                if hasattr(s, 'last_causal_effect'):
+                    recent_causals.append(getattr(s, 'last_causal_effect', 0))
+            total_causal = causal_pass + causal_block
+            rate = causal_pass / max(1, total_causal)
+            threshold = self.config.get('causal_effect_threshold', -0.01)
+            self.lbl_causal_stats.config(text=f"通过率: {rate:.1%} | 通过: {causal_pass} | 拦截: {causal_block} | 阈值: {threshold}")
+            if recent_causals:
+                avg_c = sum(recent_causals) / len(recent_causals)
+                max_c = max(recent_causals)
+                min_c = min(recent_causals)
+                self.lbl_causal_recent.config(text=f"  最近因果值: 均值{avg_c:+.3f} | 最高{max_c:+.3f} | 最低{min_c:+.3f}")
+        except Exception:
+            pass
+
+        # ---- 贝叶斯 ----
+        try:
+            for s in strategies:
+                if hasattr(s, 'ensemble') and s.ensemble:
+                    ens = s.ensemble
+                    if hasattr(ens, 'weights') and ens.weights:
+                        w = ens.weights
+                        names = ["趋势", "ML", "订单簿", "情绪"]
+                        w_str = " | ".join(f"{names[i]}: {w[i]:.0%}" for i in range(min(len(names), len(w))))
+                        self.lbl_bayes_weights.config(text=w_str)
+                    samples = getattr(ens, 'update_count', 0)
+                    phase = "初始化" if samples < 10 else ("学习中" if samples < 50 else "✅ 已稳定")
+                    self.lbl_bayes_samples.config(text=f"  融合样本: {samples} | 阶段: {phase}")
+                    break
+        except Exception:
+            pass
+
+        # ---- 进化引擎 ----
+        try:
+            if hasattr(self, 'evolution_engine') and self.evolution_engine:
+                evo = self.evolution_engine
+                gen = getattr(evo, 'generation', 0)
+                best_fit = getattr(evo, 'best_fitness', None)
+                fit_str = f"{best_fit:.4f}" if best_fit is not None else "--"
+                next_evo = getattr(evo, 'next_evolution_time', 0)
+                if next_evo > 0:
+                    remain = max(0, next_evo - time.time())
+                    next_str = f"{remain/60:.0f}分钟后"
+                else:
+                    next_str = "--"
+                self.lbl_evo_gen.config(text=f"当前代数: {gen} | 最优适应度: {fit_str} | 下次进化: {next_str}")
+                if hasattr(evo, 'best_params') and evo.best_params:
+                    bp = evo.best_params
+                    p_str = " | ".join(f"{k}:{v:.3f}" if isinstance(v, float) else f"{k}:{v}" for k, v in list(bp.items())[:6])
+                    self.lbl_evo_params.config(text=f"  最优参数: {p_str}")
+        except Exception:
+            pass
+
+        # ---- 交易统计 ----
+        try:
+            exits = {"take_profit": 0, "trail_exit": 0, "ml_trend_exit": 0, "breakeven_exit": 0, "stop_loss": 0, "time_exit": 0}
+            total_trades = 0
+            wins = 0
+            for s in strategies:
+                if hasattr(s, 'runtime_recent_exits'):
+                    for ex in s.runtime_recent_exits:
+                        total_trades += 1
+                        if ex in exits:
+                            exits[ex] += 1
+                        if ex in ("take_profit", "trail_exit", "ml_trend_exit", "breakeven_exit"):
+                            wins += 1
+            losses = total_trades - wins
+            wr = wins / max(1, total_trades)
+            self.lbl_trade_total.config(text=f"总交易: {total_trades} | 盈利: {wins} | 亏损: {losses} | 胜率: {wr:.0%}")
+            self.lbl_trade_exits.config(text=f"  止盈:{exits['take_profit']} | trail:{exits['trail_exit']} | ML退出:{exits['ml_trend_exit']} | 保本:{exits['breakeven_exit']} | 止损:{exits['stop_loss']} | 超时:{exits['time_exit']}")
+            # 累计盈亏
+            if hasattr(self, 'safety_monitor') and self.safety_monitor:
+                sm = self.safety_monitor
+                daily = getattr(sm, '_daily_pnl_usdt', 0)
+                total_pnl = getattr(sm, '_total_pnl_usdt', 0)
+                self.lbl_trade_pnl.config(text=f"  累计盈亏: {total_pnl:+.2f} USDT | 今日: {daily:+.2f} USDT")
+        except Exception:
+            pass
 
     def _gui_refresh_pool(self):
         """GUI按钮：手动刷新智能币种池"""
@@ -7267,6 +7435,7 @@ class BotGUI:
         self.lbl_status.config(text="ENGINE RUNNING", fg=self.colors["success"])
         self.backend_thread = threading.Thread(target=self.run_backend, daemon=True)
         self.backend_thread.start()
+        self._start_learning_refresh()
 
     def stop(self):
         self.log("紧急停止中...", "ERROR")
