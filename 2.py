@@ -86,7 +86,7 @@ DEFAULT_CONFIG = {
     "runtime_threshold_step": 0.0015,
     "runtime_uncertainty_step": 0.02,
     "runtime_interval_step_sec": 15,
-    "runtime_min_order_interval_sec": 60,
+    "runtime_min_order_interval_sec": 10,
     "runtime_max_order_interval_sec": 240,
     "runtime_stoploss_guard_ratio": 0.55,
     "causal_min_samples": 120,
@@ -4183,7 +4183,7 @@ class UltimateGridStrategy(threading.Thread):
         thr_step = max(0.0005, float(self.config.get("runtime_threshold_step", 0.0015)))
         unc_step = max(0.005, float(self.config.get("runtime_uncertainty_step", 0.02)))
         int_step = max(5, int(self.config.get("runtime_interval_step_sec", 15)))
-        min_interval = max(30, int(self.config.get("runtime_min_order_interval_sec", 60)))
+        min_interval = max(10, int(self.config.get("runtime_min_order_interval_sec", 60)))
         max_interval = max(min_interval, int(self.config.get("runtime_max_order_interval_sec", 240)))
         sl_guard = max(0.10, min(0.95, float(self.config.get("runtime_stoploss_guard_ratio", 0.55))))
         exits = list(self.runtime_recent_exits)
@@ -6447,7 +6447,7 @@ class BotGUI:
             interval_sec = int(float(self.cmb_rotate_seconds.get().strip()))
         except:
             interval_sec = int(self.config.get('global_order_interval', 600))
-        interval_sec = max(60, min(86400, interval_sec))
+        interval_sec = max(10, min(86400, interval_sec))
         self.config['global_order_interval'] = int(interval_sec)
         try:
             self.config['api_retry_count'] = max(1, int(self.config.get('api_retry_count', DEFAULT_CONFIG.get('api_retry_count', 5))))
