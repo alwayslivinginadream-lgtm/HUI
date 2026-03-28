@@ -7226,7 +7226,11 @@ class BotGUI:
         for w in self.sym_list_frame.winfo_children():
             w.destroy()
         self.sym_vars = {}
-        self.fr_sym.configure(text=f"币种选择（{len(self.available_symbols)}个）")
+        # fr_sym可能是普通Frame（无text属性），安全跳过
+        try:
+            self.fr_sym.configure(text=f"币种选择（{len(self.available_symbols)}个）")
+        except Exception:
+            pass  # silent fallback
         for sym in self.available_symbols:
             checked = old_vars[sym].get() if sym in old_vars else (sym in selected_symbols)
             v = tk.BooleanVar(value=checked)
