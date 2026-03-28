@@ -241,22 +241,29 @@ DEFAULT_CONFIG = {
     "slot_pressure_time_relief_min_roe": -0.0015,
     "slot_pressure_cooldown_sec": 120,
     "strategy_style": "自动",
-    "symbols": [
+    "symbols": [],
+    "operation_mode": "自动",
+    "symbol_pool": [],
+    "smart_symbol_enabled": True,
+    "smart_symbol_refresh_hours": 4,
+    "smart_symbol_mcap_top": 50,
+    "smart_symbol_volume_top": 50,
+    "smart_symbol_min_volume": 500000,
+    "smart_symbol_blacklist": [
+        "USDC/USDT:USDT", "DAI/USDT:USDT", "BUSD/USDT:USDT",
+        "TUSD/USDT:USDT", "FDUSD/USDT:USDT", "USDP/USDT:USDT"
+    ],
+    "smart_symbol_fallback": [
         "BTC/USDT:USDT", "ETH/USDT:USDT", "BNB/USDT:USDT", "SOL/USDT:USDT",
         "XRP/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT",
         "DOT/USDT:USDT", "LINK/USDT:USDT", "LTC/USDT:USDT", "BCH/USDT:USDT"
     ],
-    "operation_mode": "自动", # 可选: "自动", "生存优先" (V44), "效率优先" (V45)
-    "symbol_pool": [
-        "BTC/USDT:USDT", "ETH/USDT:USDT", "BNB/USDT:USDT", "SOL/USDT:USDT",
-        "XRP/USDT:USDT", "DOGE/USDT:USDT", "PEPE/USDT:USDT", "WIF/USDT:USDT",
-        "FET/USDT:USDT", "UNI/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT",
-        "DOT/USDT:USDT", "LINK/USDT:USDT", "ARB/USDT:USDT", "TON/USDT:USDT",
-        "NOT/USDT:USDT", "DOGS/USDT:USDT", "SUI/USDT:USDT", "APT/USDT:USDT",
-        "TRX/USDT:USDT", "NEAR/USDT:USDT", "ATOM/USDT:USDT", "LTC/USDT:USDT",
-        "BCH/USDT:USDT", "ETC/USDT:USDT", "INJ/USDT:USDT", "OP/USDT:USDT",
-        "TIA/USDT:USDT", "SEI/USDT:USDT"
-    ]
+    "adaptive_entry_enabled": True,
+    "adaptive_entry_mab_alpha": 0.15,
+    "adaptive_entry_pullback_atr_mult": 0.5,
+    "adaptive_entry_limit_timeout_sec": 300,
+    "adaptive_entry_split_parts": 3,
+    "adaptive_entry_candle_confirm_bars": 2,
 }
 
 CONFIG_FILE = "grid_ultimate_config.json"
@@ -867,6 +874,327 @@ class MarketMonitor(threading.Thread):
 
     def stop(self):
         self.running = False
+
+# ==================== 智能币种池（自动获取市值+成交量排名） ====================
+class SmartSymbolPool:
+    """
+    自动从交易所获取：
+    - 日成交量排名前N的USDT永续合约
+    - 去除稳定币和黑名单币种
+    - 定时刷新（默认每4小时）
+    - 支持手动覆盖
+    """
+    def __init__(self, exchange, config, log_callback=None):
+        self.exchange = exchange
+        self.config = config
+        self.log = log_callback
+        self.cached_symbols = []
+        self.last_refresh = 0
+        self.refresh_lock = threading.Lock()
+
+    def _safe_log(self, msg, level="INFO"):
+        if callable(self.log):
+            try:
+                self.log(f"【智能币种池】{msg}", level)
+            except Exception:
+                pass
+
+    def refresh(self, force=False):
+        """刷新币种池，返回最新的币种列表"""
+        with self.refresh_lock:
+            now = time.time()
+            refresh_hours = max(1, int(self.config.get("smart_symbol_refresh_hours", 4)))
+            if not force and self.cached_symbols and (now - self.last_refresh) < refresh_hours * 3600:
+                return list(self.cached_symbols)
+
+            try:
+                self._safe_log("正在从交易所获取合约市场数据...")
+                # 确保市场数据已加载
+                if not self.exchange.markets:
+                    api_call(self.exchange.load_markets)
+
+                # 获取所有USDT永续合约的ticker
+                all_tickers = api_call(self.exchange.fetch_tickers)
+                if not isinstance(all_tickers, dict):
+                    self._safe_log("获取ticker失败，使用缓存或回退列表", "WARNING")
+                    return self._fallback()
+
+                blacklist = set(self.config.get("smart_symbol_blacklist", []))
+                min_volume = float(self.config.get("smart_symbol_min_volume", 500000))
+                volume_top = max(10, int(self.config.get("smart_symbol_volume_top", 50)))
+
+                # 过滤：只保留USDT永续合约，排除黑名单和稳定币
+                candidates = []
+                for symbol, ticker in all_tickers.items():
+                    if not isinstance(ticker, dict):
+                        continue
+                    # 只要 :USDT 结尾的永续合约
+                    if not str(symbol).endswith(":USDT"):
+                        continue
+                    if symbol in blacklist:
+                        continue
+                    # 排除稳定币（基础币种以USD开头或包含稳定币关键词）
+                    base = str(symbol).split("/")[0].upper() if "/" in str(symbol) else ""
+                    stable_keywords = ["USD", "DAI", "BUSD", "TUSD", "FDUSD", "USDP", "USDD", "PYUSD"]
+                    if any(base == kw or base.startswith(kw) for kw in stable_keywords):
+                        continue
+
+                    quote_volume = float(ticker.get("quoteVolume", 0) or 0)
+                    if quote_volume < min_volume:
+                        continue
+
+                    # 检查该合约在交易所市场中是否真的存在
+                    if symbol not in self.exchange.markets:
+                        continue
+
+                    candidates.append({
+                        "symbol": symbol,
+                        "quoteVolume": quote_volume,
+                    })
+
+                if not candidates:
+                    self._safe_log("未找到符合条件的合约，使用回退列表", "WARNING")
+                    return self._fallback()
+
+                # 按日成交量降序排列，取前N个
+                candidates.sort(key=lambda x: x["quoteVolume"], reverse=True)
+                top_symbols = [c["symbol"] for c in candidates[:volume_top]]
+
+                # 去重
+                seen = set()
+                final = []
+                for s in top_symbols:
+                    if s not in seen:
+                        seen.add(s)
+                        final.append(s)
+
+                self.cached_symbols = final
+                self.last_refresh = now
+                self._safe_log(f"刷新完成，共 {len(final)} 个币种 (前3: {final[:3]})")
+                return list(final)
+
+            except Exception as e:
+                self._safe_log(f"刷新异常: {e}", "ERROR")
+                return self._fallback()
+
+    def _fallback(self):
+        """回退到配置中的固定列表或默认列表"""
+        if self.cached_symbols:
+            return list(self.cached_symbols)
+        fallback = self.config.get("smart_symbol_fallback", [])
+        if fallback:
+            return list(fallback)
+        return [
+            "BTC/USDT:USDT", "ETH/USDT:USDT", "BNB/USDT:USDT", "SOL/USDT:USDT",
+            "XRP/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT",
+            "DOT/USDT:USDT", "LINK/USDT:USDT", "LTC/USDT:USDT", "BCH/USDT:USDT"
+        ]
+
+    def get_symbols(self):
+        """获取当前币种池（不触发刷新）"""
+        if self.cached_symbols:
+            return list(self.cached_symbols)
+        return self._fallback()
+
+
+# ==================== 自适应入场引擎（MAB强化学习） ====================
+class AdaptiveEntryEngine:
+    """
+    根据市场状态动态选择最佳入场方式：
+    - Mode 0: 市价即入（强趋势+高置信）
+    - Mode 1: ATR回撤限价（弱趋势，挂在ATR回撤位）
+    - Mode 2: 支撑/阻力限价（震荡市，挂在布林带边界）
+    - Mode 3: 分批入场+蜡烛确认（高波动，拆单分批）
+
+    使用 Multi-Armed Bandit (UCB1) 算法动态优化选择
+    """
+    MODE_MARKET = 0
+    MODE_ATR_PULLBACK = 1
+    MODE_SR_LIMIT = 2
+    MODE_SPLIT_CONFIRM = 3
+    MODE_NAMES = {0: "市价即入", 1: "ATR回撤限价", 2: "支撑阻力限价", 3: "分批蜡烛确认"}
+
+    def __init__(self, config, log_callback=None):
+        self.config = config
+        self.log = log_callback
+        self.n_modes = 4
+        # MAB统计：每种模式的尝试次数、累计奖励
+        self.counts = [1] * self.n_modes  # 初始化为1避免除零
+        self.rewards = [0.0] * self.n_modes
+        self.total_plays = self.n_modes
+        self.history = deque(maxlen=500)  # (mode, reward, timestamp)
+
+    def _safe_log(self, msg, level="INFO"):
+        if callable(self.log):
+            try:
+                self.log(f"【自适应入场】{msg}", level)
+            except Exception:
+                pass
+
+    def select_mode(self, market_state, confidence, atr_ratio, volatility_ratio, order_imbalance):
+        """
+        根据市场状态选择入场模式
+        如果adaptive_entry_enabled=False，始终返回市价模式
+        """
+        if not bool(self.config.get("adaptive_entry_enabled", True)):
+            return self.MODE_MARKET
+
+        # 计算每种模式的UCB1得分
+        ucb_scores = []
+        for i in range(self.n_modes):
+            if self.counts[i] == 0:
+                ucb_scores.append(float('inf'))
+            else:
+                avg_reward = self.rewards[i] / self.counts[i]
+                exploration = math.sqrt(2.0 * math.log(max(1, self.total_plays)) / self.counts[i])
+                ucb_scores.append(avg_reward + exploration)
+
+        # 基于市场状态的先验偏置（乘到UCB分数上）
+        bias = [1.0] * self.n_modes
+
+        if market_state in (MarketState.EXTREME_UPTREND, MarketState.EXTREME_DOWNTREND,
+                            MarketState.STRONG_UPTREND, MarketState.STRONG_DOWNTREND):
+            # 强趋势：偏好市价即入
+            bias[self.MODE_MARKET] = 2.0
+            bias[self.MODE_ATR_PULLBACK] = 1.2
+            bias[self.MODE_SR_LIMIT] = 0.5
+            bias[self.MODE_SPLIT_CONFIRM] = 0.8
+        elif market_state == MarketState.RANGE:
+            # 震荡市：偏好支撑阻力限价
+            bias[self.MODE_MARKET] = 0.6
+            bias[self.MODE_ATR_PULLBACK] = 1.0
+            bias[self.MODE_SR_LIMIT] = 2.0
+            bias[self.MODE_SPLIT_CONFIRM] = 1.2
+        elif market_state in (MarketState.WEAK_UPTREND, MarketState.WEAK_DOWNTREND):
+            # 弱趋势：偏好ATR回撤
+            bias[self.MODE_MARKET] = 0.8
+            bias[self.MODE_ATR_PULLBACK] = 2.0
+            bias[self.MODE_SR_LIMIT] = 1.0
+            bias[self.MODE_SPLIT_CONFIRM] = 1.0
+
+        # 高波动时偏好分批确认
+        if atr_ratio > 0.03:
+            bias[self.MODE_SPLIT_CONFIRM] = max(bias[self.MODE_SPLIT_CONFIRM], 1.8)
+            bias[self.MODE_MARKET] = min(bias[self.MODE_MARKET], 0.7)
+
+        # 高置信时偏好市价
+        if confidence > 0.8:
+            bias[self.MODE_MARKET] = max(bias[self.MODE_MARKET], 1.8)
+
+        # 应用偏置
+        final_scores = [ucb_scores[i] * bias[i] for i in range(self.n_modes)]
+
+        best_mode = int(np.argmax(final_scores))
+        self._safe_log(
+            f"选择模式: {self.MODE_NAMES[best_mode]} | "
+            f"UCB分数: [{', '.join(f'{s:.3f}' for s in final_scores)}] | "
+            f"市场: {market_state.name} | 置信: {confidence:.2f} | ATR比: {atr_ratio:.4f}"
+        )
+        return best_mode
+
+    def record_outcome(self, mode, reward):
+        """
+        记录入场结果用于MAB学习
+        reward: 正数=好（成交快/滑点小/盈利）, 负数=差（超时/滑点大/亏损）
+        """
+        if mode < 0 or mode >= self.n_modes:
+            return
+        alpha = max(0.05, min(0.3, float(self.config.get("adaptive_entry_mab_alpha", 0.15))))
+        # 指数移动平均更新
+        old_avg = self.rewards[mode] / max(1, self.counts[mode])
+        new_avg = old_avg * (1 - alpha) + reward * alpha
+        self.counts[mode] += 1
+        self.rewards[mode] = new_avg * self.counts[mode]
+        self.total_plays += 1
+        self.history.append((mode, reward, time.time()))
+        self._safe_log(f"更新模式 {self.MODE_NAMES[mode]}: reward={reward:.3f} avg={new_avg:.3f} count={self.counts[mode]}")
+
+    def compute_entry_params(self, mode, side, price, atr, bb_upper, bb_lower, grid_range):
+        """
+        根据选定的入场模式计算具体下单参数
+        返回 dict: {order_type, price, split_parts, timeout_sec, confirm_bars, reason}
+        """
+        pullback_mult = max(0.1, min(1.5, float(self.config.get("adaptive_entry_pullback_atr_mult", 0.5))))
+        limit_timeout = max(30, int(self.config.get("adaptive_entry_limit_timeout_sec", 300)))
+        split_parts = max(2, min(5, int(self.config.get("adaptive_entry_split_parts", 3))))
+        confirm_bars = max(1, min(5, int(self.config.get("adaptive_entry_candle_confirm_bars", 2))))
+
+        if mode == self.MODE_MARKET:
+            return {
+                "order_type": "market",
+                "price": price,
+                "split_parts": 1,
+                "timeout_sec": 0,
+                "confirm_bars": 0,
+                "reason": "强趋势市价即入"
+            }
+
+        elif mode == self.MODE_ATR_PULLBACK:
+            # 在ATR回撤位挂限价单
+            if side == "buy":
+                entry_price = price - atr * pullback_mult
+            else:
+                entry_price = price + atr * pullback_mult
+            return {
+                "order_type": "limit",
+                "price": max(1e-8, entry_price),
+                "split_parts": 1,
+                "timeout_sec": limit_timeout,
+                "confirm_bars": 0,
+                "reason": f"ATR回撤限价({pullback_mult:.1f}xATR)"
+            }
+
+        elif mode == self.MODE_SR_LIMIT:
+            # 在布林带边界挂限价单
+            if side == "buy":
+                entry_price = bb_lower if bb_lower > 0 else price * (1 - grid_range)
+            else:
+                entry_price = bb_upper if bb_upper > 0 else price * (1 + grid_range)
+            return {
+                "order_type": "limit",
+                "price": max(1e-8, entry_price),
+                "split_parts": 1,
+                "timeout_sec": limit_timeout,
+                "confirm_bars": 0,
+                "reason": "支撑阻力限价"
+            }
+
+        elif mode == self.MODE_SPLIT_CONFIRM:
+            # 分批入场：先小单试探，蜡烛确认后加仓
+            if side == "buy":
+                entry_price = price - atr * pullback_mult * 0.3
+            else:
+                entry_price = price + atr * pullback_mult * 0.3
+            return {
+                "order_type": "limit",
+                "price": max(1e-8, entry_price),
+                "split_parts": split_parts,
+                "timeout_sec": limit_timeout,
+                "confirm_bars": confirm_bars,
+                "reason": f"分批确认入场({split_parts}笔/确认{confirm_bars}根K线)"
+            }
+
+        # 默认回退市价
+        return {
+            "order_type": "market",
+            "price": price,
+            "split_parts": 1,
+            "timeout_sec": 0,
+            "confirm_bars": 0,
+            "reason": "默认市价"
+        }
+
+    def get_stats(self):
+        """返回各模式的统计信息"""
+        stats = {}
+        for i in range(self.n_modes):
+            avg = self.rewards[i] / max(1, self.counts[i])
+            stats[self.MODE_NAMES[i]] = {
+                "count": self.counts[i],
+                "avg_reward": round(avg, 4),
+            }
+        return stats
+
 
 # ==================== 第2层：多币种相关性分析 ====================
 class CorrelationAnalyzer:
@@ -3268,6 +3596,15 @@ class UltimateGridStrategy(threading.Thread):
         self.grid_manager = PhysicalGridManager(exchange, symbol, self.log_msg)
         self.grid_mode_active = False
         
+        # 自适应入场引擎
+        self.adaptive_entry = AdaptiveEntryEngine(self.config, self.log_msg)
+        self.last_entry_mode = -1
+        self.last_entry_fill_ts = 0.0
+        
+        # BB缓存（供自适应入场使用）
+        self.cached_bb_upper = 0.0
+        self.cached_bb_lower = 0.0
+        
         # 将配置的 stoploss_hunt_window 作为 IPW 冷启动优化的参数传递
         self.ipw_warmup_window = max(20, int(self.config.get('stoploss_hunt_window', 60)))
         
@@ -4283,6 +4620,10 @@ class UltimateGridStrategy(threading.Thread):
                     volume_ratio = volume / avg_volume if avg_volume > 0 else 1.0
                     self.cached_atr = atr
                     self.cached_volume_ratio = volume_ratio
+                    # 缓存布林带供自适应入场使用
+                    _, bb_up, bb_low = calculate_bb_width(df['c'])
+                    self.cached_bb_upper = float(bb_up) if bb_up and math.isfinite(float(bb_up)) else 0.0
+                    self.cached_bb_lower = float(bb_low) if bb_low and math.isfinite(float(bb_low)) else 0.0
                     self.last_ohlcv_fetch = now_ts
                 else:
                     atr = self.cached_atr
@@ -4958,54 +5299,74 @@ class UltimateGridStrategy(threading.Thread):
             except Exception:
                 pass
 
-            if price_type == "market":
+            # ==================== 自适应入场引擎接入 ====================
+            atr_ratio_for_entry = self.cached_atr / price if price > 0 and self.cached_atr > 0 else 0.02
+            confidence_for_entry = min(1.0, abs(buy_prob - 0.5) * 2)
+            state_for_entry = self.monitor.get_market_state() if self.monitor else MarketState.RANGE
+            vol_ratio_for_entry = self.cached_volume_ratio if hasattr(self, 'cached_volume_ratio') else 1.0
+            ob_imb_for_entry = float(decision.get("details", {}).get("book_score", 0.5)) - 0.5 if isinstance(decision, dict) else 0.0
+
+            entry_mode = self.adaptive_entry.select_mode(
+                state_for_entry, confidence_for_entry, atr_ratio_for_entry, vol_ratio_for_entry, ob_imb_for_entry
+            )
+            self.last_entry_mode = entry_mode
+
+            entry_params = self.adaptive_entry.compute_entry_params(
+                entry_mode, side, price, self.cached_atr,
+                getattr(self, 'cached_bb_upper', 0.0),
+                getattr(self, 'cached_bb_lower', 0.0),
+                grid_range
+            )
+
+            adaptive_order_type = entry_params.get("order_type", "limit")
+            adaptive_price = entry_params.get("price", price)
+            adaptive_timeout = entry_params.get("timeout_sec", 0)
+            adaptive_split = entry_params.get("split_parts", 1)
+            adaptive_reason = entry_params.get("reason", "自适应入场")
+
+            # 如果自适应引擎选择了市价，直接走市价通道
+            if adaptive_order_type == "market":
                 expected_mkt = best_ask if side == "buy" else best_bid
                 if expected_mkt <= 0:
                     expected_mkt = price
-                placed = self.place_market_order(side, qty, exec_reason, decision, expected_price=expected_mkt)
-                if placed:
-                    self.position_open_context = getattr(self, "last_decision_context", None)
-                    self.has_position = True # 立即标记，防止20秒刷新窗口期内重复穿透
-                    if jitter_sec > 0:
-                        self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
-                return placed
-
-            if price_type in ("limit", "aggressive_limit"):
-                pre_wait_sec = max(0.0, min(5.0, (1.0 - urgency) * 4.0))
-                if exec_algo == "twap":
-                    pre_wait_sec = max(pre_wait_sec, 1.2)
-                elif exec_algo == "vwap":
-                    pre_wait_sec = max(0.0, pre_wait_sec * 0.6)
-                if pre_wait_sec > 0:
-                    deadline = time.monotonic() + pre_wait_sec
-                    while time.monotonic() < deadline:
-                        try:
-                            ob2 = self.get_cached_orderbook(depth=3, force=True)
-                            bids2 = ob2.get("bids", []) if isinstance(ob2, dict) else []
-                            asks2 = ob2.get("asks", []) if isinstance(ob2, dict) else []
-                            if bids2 and len(bids2[0]) > 0:
-                                best_bid = float(bids2[0][0])
-                            if asks2 and len(asks2[0]) > 0:
-                                best_ask = float(asks2[0][0])
-                        except Exception:
-                            pass
-                        time.sleep(0.4)
-
-            if side == 'buy':
-                passive_price = price * (1 - grid_range)
-                ref = best_ask if best_ask > 0 else (best_bid if best_bid > 0 else price)
-                if price_type == "aggressive_limit":
-                    order_price = max(passive_price, ref * (1 + max(-0.003, min(0.003, price_offset))))
+                # 分批入场
+                if adaptive_split > 1:
+                    per_qty = max(min_amount, qty / adaptive_split)
+                    all_ok = True
+                    for part_i in range(adaptive_split):
+                        ok = self.place_market_order(side, per_qty, f"{adaptive_reason}(第{part_i+1}/{adaptive_split}批)", decision, expected_price=expected_mkt)
+                        if not ok:
+                            all_ok = False
+                            break
+                        if part_i < adaptive_split - 1:
+                            time.sleep(random.uniform(0.5, 2.0))
+                            # 刷新价格
+                            p2, _ = self.get_latest_price()
+                            if p2 > 0:
+                                expected_mkt = p2
+                    if all_ok:
+                        self.position_open_context = getattr(self, "last_decision_context", None)
+                        self.has_position = True
+                        self.last_entry_fill_ts = time.time()
+                        if jitter_sec > 0:
+                            self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
+                    return all_ok
                 else:
-                    order_price = min(passive_price, ref * (1 + max(-0.002, price_offset)))
-            else:
-                passive_price = price * (1 + grid_range)
-                ref = best_bid if best_bid > 0 else (best_ask if best_ask > 0 else price)
-                if price_type == "aggressive_limit":
-                    order_price = min(passive_price, ref * (1 + max(-0.003, min(0.003, price_offset))))
-                else:
-                    order_price = max(passive_price, ref * (1 + min(0.002, price_offset)))
-            order_price = max(1e-8, float(order_price))
+                    placed = self.place_market_order(side, qty, adaptive_reason, decision, expected_price=expected_mkt)
+                    if placed:
+                        self.position_open_context = getattr(self, "last_decision_context", None)
+                        self.has_position = True
+                        self.last_entry_fill_ts = time.time()
+                        if jitter_sec > 0:
+                            self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
+                    return placed
+
+            # 限价单通道：使用自适应引擎计算的价格
+            if adaptive_timeout > 0:
+                timeout_sec = adaptive_timeout
+            order_price = adaptive_price
+
+            # 应用价格抖动
             try:
                 price_jitter = max(0.0, min(0.002, float(self.config.get("execution_price_jitter_ratio", 0.0005))))
             except Exception:
@@ -5035,7 +5396,7 @@ class UltimateGridStrategy(threading.Thread):
 
             self.log_msg(
                 f"【全局调度】下单 #{self.order_count} {side} {qty:.4f} @ {order_price:.4f} "
-                f"(执行:{price_type}/{exec_algo}|原因:{exec_reason}|风格:{decision['style']}|机会:{decision['opportunity_score']:.2f}|风险:{decision['risk_penalty']:.2f}|总额度:{margin_total:.2f}U|已用:{used_margin:.2f}U|可用:{available_margin:.2f}U|单币:{margin_per_symbol:.2f}U|槽位:{slots_left}|多概率:{buy_prob*100:.1f}%)"
+                f"(入场:{adaptive_reason}|风格:{decision['style']}|机会:{decision['opportunity_score']:.2f}|风险:{decision['risk_penalty']:.2f}|总额度:{margin_total:.2f}U|已用:{used_margin:.2f}U|可用:{available_margin:.2f}U|单币:{margin_per_symbol:.2f}U|槽位:{slots_left}|多概率:{buy_prob*100:.1f}%)"
             )
             try:
                 self.last_entry_causal_effect = float(decision.get("details", {}).get("causal_effect", 0.0))
@@ -5766,6 +6127,18 @@ class UltimateGridStrategy(threading.Thread):
         outcome = float(mapping.get(action, -0.1))
         self.performance_returns.append(outcome)
         
+        # MAB入场模式反馈：根据平仓结果更新入场引擎
+        if hasattr(self, 'adaptive_entry') and hasattr(self, 'last_entry_mode') and self.last_entry_mode >= 0:
+            mab_reward = outcome * 0.5  # 缩放到合理范围
+            # 考虑成交速度：如果入场到平仓时间很短且盈利，说明入场时机好
+            if hasattr(self, 'last_entry_fill_ts') and self.last_entry_fill_ts > 0:
+                hold_hours = (time.time() - self.last_entry_fill_ts) / 3600
+                if hold_hours < 2 and outcome > 0:
+                    mab_reward += 0.2  # 快速盈利加分
+                elif hold_hours > 12 and outcome < 0:
+                    mab_reward -= 0.1  # 长时间持仓亏损扣分
+            self.adaptive_entry.record_outcome(self.last_entry_mode, mab_reward)
+        
         # 贝叶斯策略权重更新：根据平仓结果的胜负，动态调整各个子策略的权重
         # outcome > 0 视为胜利 (1.0), outcome < 0 视为失败 (-1.0)
         actual_outcome = 1.0 if outcome > 0 else -1.0
@@ -5931,9 +6304,9 @@ class BotGUI:
                 self.config = DEFAULT_CONFIG.copy()
         else:
             self.config = DEFAULT_CONFIG.copy()
-        symbol_pool = self.config.get('symbol_pool', self.config.get('symbols', DEFAULT_CONFIG['symbols'][:]))
+        symbol_pool = self.config.get('symbol_pool', self.config.get('symbols', []))
         if not isinstance(symbol_pool, list):
-            symbol_pool = DEFAULT_CONFIG['symbol_pool'][:]
+            symbol_pool = self.config.get('smart_symbol_fallback', DEFAULT_CONFIG.get('smart_symbol_fallback', []))
         cleaned_pool = []
         seen = set()
         for sym in symbol_pool:
@@ -5946,11 +6319,15 @@ class BotGUI:
                 cleaned_pool.append(s)
                 seen.add(s)
         if not cleaned_pool:
-            cleaned_pool = DEFAULT_CONFIG['symbol_pool'][:]
+            cleaned_pool = self.config.get('smart_symbol_fallback', DEFAULT_CONFIG.get('smart_symbol_fallback', [
+                "BTC/USDT:USDT", "ETH/USDT:USDT", "BNB/USDT:USDT", "SOL/USDT:USDT",
+                "XRP/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT",
+                "DOT/USDT:USDT", "LINK/USDT:USDT", "LTC/USDT:USDT", "BCH/USDT:USDT"
+            ]))
         selected_symbols = self.config.get('symbols', cleaned_pool[:])
         if not isinstance(selected_symbols, list):
             selected_symbols = cleaned_pool[:]
-        selected_symbols = [s for s in selected_symbols if s in cleaned_pool]
+        # 不再过滤：允许symbols包含pool外的币种（智能池动态获取的）
         if not selected_symbols:
             selected_symbols = cleaned_pool[:]
         self.available_symbols = cleaned_pool
@@ -6735,7 +7112,7 @@ class BotGUI:
             self.available_symbols = [s for s in self.available_symbols if s != sym]
         self.config["symbols"] = [s for s in self.config.get("symbols", []) if s != sym]
         if not self.available_symbols:
-            self.available_symbols = DEFAULT_CONFIG["symbol_pool"][:]
+            self.available_symbols = self.config.get("smart_symbol_fallback", ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"])
         if not self.config["symbols"]:
             self.config["symbols"] = self.available_symbols[:]
         self.sym_mgr_entry.delete(0, tk.END)
@@ -6876,7 +7253,7 @@ class BotGUI:
         self.available_symbols = [s for s in self.available_symbols if s != sym]
         self.config['symbols'] = [s for s in self.config.get('symbols', []) if s != sym]
         if not self.available_symbols:
-            self.available_symbols = DEFAULT_CONFIG['symbol_pool'][:]
+            self.available_symbols = self.config.get('smart_symbol_fallback', ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT'])
         if not self.config['symbols']:
             self.config['symbols'] = self.available_symbols[:]
         self.refresh_symbol_checkboxes()
@@ -7045,6 +7422,42 @@ class BotGUI:
 
         # 创建全局调度器
         self.scheduler = GlobalScheduler(interval=self.config.get('global_order_interval', 3600))
+
+        # ==================== 智能币种池初始化 ====================
+        self.smart_pool = SmartSymbolPool(exchange, self.config, self.log)
+        if bool(self.config.get("smart_symbol_enabled", True)):
+            self.log("【智能币种池】正在自动获取币种...", "INFO")
+            auto_symbols = self.smart_pool.refresh(force=True)
+            if auto_symbols:
+                # 如果用户在GUI手动选了币种，合并（手动优先）
+                manual_symbols = self.config.get('symbols', [])
+                if manual_symbols:
+                    # 合并去重：手动选的在前面
+                    merged = list(manual_symbols)
+                    for s in auto_symbols:
+                        if s not in merged:
+                            merged.append(s)
+                    self.config['symbols'] = merged
+                    self.config['symbol_pool'] = merged
+                else:
+                    self.config['symbols'] = auto_symbols
+                    self.config['symbol_pool'] = auto_symbols
+                self.log(f"【智能币种池】最终运行 {len(self.config['symbols'])} 个币种", "INFO")
+            else:
+                self.log("【智能币种池】获取失败，使用回退列表", "WARNING")
+                fallback = self.smart_pool._fallback()
+                if not self.config.get('symbols'):
+                    self.config['symbols'] = fallback
+                    self.config['symbol_pool'] = fallback
+        else:
+            # 手动模式：如果symbols为空，使用回退列表
+            if not self.config.get('symbols'):
+                self.config['symbols'] = self.config.get('smart_symbol_fallback', [
+                    "BTC/USDT:USDT", "ETH/USDT:USDT", "BNB/USDT:USDT", "SOL/USDT:USDT",
+                    "XRP/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT",
+                    "DOT/USDT:USDT", "LINK/USDT:USDT", "LTC/USDT:USDT", "BCH/USDT:USDT"
+                ])
+
         try:
             startup_tickers = api_call(exchange.fetch_tickers, self.config.get('symbols', []))
             qv = {}
