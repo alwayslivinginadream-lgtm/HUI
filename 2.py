@@ -7540,11 +7540,34 @@ class BotGUI:
                             shutil.copy2(current_file, exe_bak)
                         except Exception:
                             pass
+                        # 智能查找python解释器
+                        python_cmd = None
+                        for candidate in [
+                            shutil.which("python"),
+                            shutil.which("python3"),
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python", "Python313", "python.exe"),
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python", "Python312", "python.exe"),
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python", "Python311", "python.exe"),
+                            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Python", "Python310", "python.exe"),
+                            r"C:\Python313\python.exe", r"C:\Python312\python.exe",
+                            r"C:\Python311\python.exe", r"C:\Python310\python.exe",
+                        ]:
+                            if candidate and os.path.isfile(candidate):
+                                python_cmd = candidate
+                                break
+                        if not python_cmd:
+                            raise FileNotFoundError("未找到python解释器")
+                        self.log(f"🔧 使用Python: {python_cmd}", "INFO")
+                        # 先确保pyinstaller已安装
+                        subprocess.run([python_cmd, "-m", "pip", "install", "--quiet", "pyinstaller"],
+                                       capture_output=True, text=True, timeout=120)
                         # 调用pyinstaller打包
                         result = subprocess.run(
-                            [sys.executable.replace("PhoenixQ.exe", "python.exe"), "-m", "PyInstaller",
-                             "--onefile", "--windowed", "--name", exe_name, py_file],
-                            cwd=update_dir, capture_output=True, text=True, timeout=120
+                            [python_cmd, "-m", "PyInstaller",
+                             "--onefile", "--windowed", "--name", exe_name,
+                             "--hidden-import", "pysocks", "--hidden-import", "socks",
+                             py_file],
+                            cwd=update_dir, capture_output=True, text=True, timeout=180
                         )
                         dist_exe = os.path.join(update_dir, "dist", f"{exe_name}.exe")
                         if os.path.exists(dist_exe):
