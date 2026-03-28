@@ -6487,7 +6487,7 @@ class BotGUI:
         self.lbl_balance.pack(side="right", padx=16)
         tk.Frame(self.root, bg=ACCENT, height=2).pack(fill="x")
 
-        # ====== 启动/停止按钮栏 ======
+        # ====== 启动/停止/更新按钮栏 ======
         cmd_bar = tk.Frame(self.root, bg=BG)
         cmd_bar.pack(fill="x", pady=4, padx=8)
         self.btn_start = ttk.Button(cmd_bar, text="▶ 启动引擎", command=self.start, style="Start.TButton")
@@ -6495,6 +6495,10 @@ class BotGUI:
         self.btn_stop = ttk.Button(cmd_bar, text="⏹ 紧急熔断", command=self.stop, style="Stop.TButton")
         self.btn_stop.pack(side="left", padx=6, ipady=4)
         self.btn_stop["state"] = "disabled"
+        self.btn_update = ttk.Button(cmd_bar, text="🔄 一键更新", command=self._auto_update)
+        self.btn_update.pack(side="right", padx=6, ipady=4)
+        self.lbl_version = tk.Label(cmd_bar, text="", bg=BG, fg="#7a7ea0", font=("Consolas", 8))
+        self.lbl_version.pack(side="right", padx=4)
         tk.Frame(self.root, bg=BORDER, height=1).pack(fill="x")
         # ====== Notebook 主体 ======
         nb = ttk.Notebook(self.root)
@@ -7175,6 +7179,77 @@ class BotGUI:
         self.root.after(0, lambda: self.btn_start.config(state="normal"))
         self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
         self.log("系统已停止", "ERROR")
+
+    def _auto_update(self):
+        """一键从GitHub下载最新版本并重启"""
+        import urllib.request
+        REPO_URL = "https://raw.githubusercontent.com/alwayslivinginadream-lgtm/HUI/main/2.py"
+
+        def _do_update():
+            try:
+                self.log("🔄 正在检查更新...", "INFO")
+                self.btn_update.config(state="disabled", text="⏳ 更新中...")
+
+                # 下载最新代码
+                req = urllib.request.Request(REPO_URL, headers={"Cache-Control": "no-cache"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    new_code = resp.read()
+
+                if len(new_code) < 1000:
+                    self.log("❌ 下载失败：文件太小", "ERROR")
+                    self.root.after(0, lambda: self.btn_update.config(state="normal", text="🔄 一键更新"))
+                    return
+
+                # 获取当前脚本路径
+                current_file = os.path.abspath(sys.argv[0])
+                # 如果是exe打包的，找到同目录下的2.py或自身
+                if getattr(sys, 'frozen', False):
+                    # PyInstaller打包模式：更新同目录的2.py
+                    update_dir = os.path.dirname(current_file)
+                    target_file = os.path.join(update_dir, "2.py")
+                else:
+                    target_file = current_file
+
+                # 备份旧文件
+                backup_file = target_file + ".bak"
+                if os.path.exists(target_file):
+                    try:
+                        import shutil
+                        shutil.copy2(target_file, backup_file)
+                    except Exception:
+                        pass
+
+                # 写入新文件
+                with open(target_file, "wb") as f:
+                    f.write(new_code)
+
+                new_size = len(new_code)
+                self.log(f"✅ 更新成功！({new_size} bytes)", "INFO")
+                self.log(f"📁 已保存到: {target_file}", "INFO")
+                self.log(f"💾 旧版备份: {backup_file}", "INFO")
+
+                if getattr(sys, 'frozen', False):
+                    self.log("⚠️ exe模式：请重新打包exe或直接用 python 2.py 运行新版本", "WARNING")
+                    self.root.after(0, lambda: messagebox.showinfo("更新完成", f"新版本已下载到:\n{target_file}\n\n请重新打包exe或用python 2.py运行"))
+                else:
+                    self.log("🔄 即将重启...", "INFO")
+                    self.root.after(0, lambda: messagebox.showinfo("更新完成", "即将重启应用"))
+                    self.root.after(1000, lambda: self._restart_app())
+
+            except Exception as e:
+                self.log(f"❌ 更新失败: {e}", "ERROR")
+            finally:
+                self.root.after(0, lambda: self.btn_update.config(state="normal", text="🔄 一键更新"))
+
+        threading.Thread(target=_do_update, daemon=True).start()
+
+    def _restart_app(self):
+        """重启应用"""
+        try:
+            self.root.destroy()
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception:
+            pass
 
     def run_backend(self):
         try:
