@@ -254,9 +254,7 @@ DEFAULT_CONFIG = {
         "TUSD/USDT:USDT", "FDUSD/USDT:USDT", "USDP/USDT:USDT"
     ],
     "smart_symbol_fallback": [
-        "BTC/USDT:USDT", "ETH/USDT:USDT", "BNB/USDT:USDT", "SOL/USDT:USDT",
-        "XRP/USDT:USDT", "DOGE/USDT:USDT", "ADA/USDT:USDT", "AVAX/USDT:USDT",
-        "DOT/USDT:USDT", "LINK/USDT:USDT", "LTC/USDT:USDT", "BCH/USDT:USDT"
+        "BTC/USDT:USDT", "ETH/USDT:USDT"
     ],
     "adaptive_entry_enabled": True,
     "adaptive_entry_mab_alpha": 0.15,
@@ -7455,20 +7453,16 @@ class BotGUI:
             self.log("【智能币种池】正在自动获取币种...", "INFO")
             auto_symbols = self.smart_pool.refresh(force=True)
             if auto_symbols:
-                # 如果用户在GUI手动选了币种，合并（手动优先）
-                manual_symbols = self.config.get('symbols', [])
-                if manual_symbols:
-                    # 合并去重：手动选的在前面
-                    merged = list(manual_symbols)
-                    for s in auto_symbols:
-                        if s not in merged:
-                            merged.append(s)
-                    self.config['symbols'] = merged
-                    self.config['symbol_pool'] = merged
-                else:
-                    self.config['symbols'] = auto_symbols
-                    self.config['symbol_pool'] = auto_symbols
-                self.log(f"【智能币种池】最终运行 {len(self.config['symbols'])} 个币种", "INFO")
+                # 保底：确保BTC和ETH始终在列表最前面
+                must_have = ["BTC/USDT:USDT", "ETH/USDT:USDT"]
+                final = list(must_have)
+                for s in auto_symbols:
+                    if s not in final:
+                        final.append(s)
+                # 智能池获取的全部选上
+                self.config['symbols'] = final
+                self.config['symbol_pool'] = final
+                self.log(f"【智能币种池】最终运行 {len(final)} 个币种（含BTC/ETH保底）", "INFO")
             else:
                 self.log("【智能币种池】获取失败，使用回退列表", "WARNING")
                 fallback = self.smart_pool._fallback()
