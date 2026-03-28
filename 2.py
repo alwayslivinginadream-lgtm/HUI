@@ -1286,7 +1286,8 @@ class VolatilityAdapter:
         raw = self.base_leverage * self.target_volatility / current_vol
         if not math.isfinite(raw):
             return self.current_leverage
-        self.current_leverage = max(1, min(self.base_leverage * 2, int(raw)))
+        # 杠杆上限不超过base_leverage（用户配置值），防止低波动时自动加杠杆超标
+        self.current_leverage = max(1, min(self.base_leverage, int(raw)))
         return self.current_leverage
 
 # ==================== 第4层：智能止损止盈 ====================
@@ -4454,6 +4455,15 @@ class UltimateGridStrategy(threading.Thread):
             self.update_position_status(force=True)
             if self.has_position:
                 self.log_msg(f"启动继承持仓: 数量{self.position_contracts:.4f} 开仓价{self.position_entry_price:.6f}", "WARNING")
+                # 校验继承持仓是否超过单币保证金上限
+                try:
+                    max_active_limit = max(1, int(self.config.get('max_active_symbols', 4)))
+                    max_margin_per = float(self.config.get('margin_usdt', 100)) / max_active_limit
+                    pos_margin = float(self.position_margin) if hasattr(self, 'position_margin') and self.position_margin else 0.0
+                    if pos_margin > max_margin_per * 1.1:
+                        self.log_msg(f"⚠️ 继承持仓保证金({pos_margin:.2f}U)超过单币上限({max_margin_per:.2f}U)！建议手动减仓或调整max_active_symbols", "ERROR")
+                except Exception:
+                    pass
         except Exception as e:
             if is_auth_error(e):
                 self.running = False
