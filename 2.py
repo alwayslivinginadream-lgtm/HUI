@@ -1362,7 +1362,7 @@ class SmartStopLoss:
             self._save_state()
         return removed
 
-    def check_stop(self, symbol, current_price, atr_multiplier=None, max_holding_hours=None, trail_multiplier=1.2, liquidation_price=0.0):
+    def check_stop(self, symbol, current_price, atr_multiplier=None, max_holding_hours=None, trail_multiplier=1.2, liquidation_price=0.0, ml_predictor=None, recent_prices=None, volatility_ratio=1.0):
         if not self.positions:
             self._load_state()
 
@@ -1393,20 +1393,62 @@ class SmartStopLoss:
                 decay = max(0.55, 1 - (holding_time - 8) * 0.1)
                 tp_distance *= decay
 
+            # ====== 自适应trail：根据波动率动态调整 ======
+            # 波动率高→trail宽（给空间），波动率低→trail紧（锁利润）
+            adaptive_trail = trail_multiplier
+            if volatility_ratio > 0:
+                if volatility_ratio > 1.5:
+                    # 高波动：放宽trail，给趋势空间
+                    adaptive_trail = trail_multiplier * min(1.5, 0.8 + volatility_ratio * 0.3)
+                elif volatility_ratio < 0.7:
+                    # 低波动：收紧trail，快速锁利
+                    adaptive_trail = trail_multiplier * max(0.5, 0.6 + volatility_ratio * 0.3)
+                # 否则正常波动，用原始trail_multiplier
+
+            # ====== 保本线：浮盈超过手续费后止损拉到成本价 ======
+            fee_cost = pos['entry_price'] * 0.001  # 开+平约0.1%
+            if side == 'buy':
+                unrealized = current_price - pos['entry_price']
+            else:
+                unrealized = pos['entry_price'] - current_price
+
+            breakeven_active = unrealized > fee_cost * 1.5  # 浮盈超过1.5倍手续费
+
+            # ====== ML智能退出：趋势衰减检测 ======
+            ml_exit = False
+            if ml_predictor is not None and recent_prices is not None and len(recent_prices) >= 20:
+                try:
+                    ml_prob = ml_predictor.predict(recent_prices)
+                    # ml_prob是做多概率，做空时反转
+                    trend_prob = ml_prob if side == 'buy' else (1 - ml_prob)
+                    # 持有方向的趋势概率低于35%且已有浮盈 → 趋势衰减信号
+                    if trend_prob < 0.35 and unrealized > 0:
+                        ml_exit = True
+                except Exception:
+                    pass
+
             if side == 'buy':
                 pos['best_price'] = max(pos.get('best_price', pos['entry_price']), current_price)
                 if current_price >= pos['entry_price'] + tp_distance:
                     triggered_action = 'take_profit'
-                elif current_price <= pos['best_price'] - atr * max(0.8, trail_multiplier):
+                elif ml_exit and current_price > pos['entry_price'] + fee_cost:
+                    triggered_action = 'ml_trend_exit'
+                elif current_price <= pos['best_price'] - atr * max(0.5, adaptive_trail):
                     triggered_action = 'trail_exit'
+                elif breakeven_active and current_price <= pos['entry_price'] + fee_cost * 0.5:
+                    triggered_action = 'breakeven_exit'
                 elif current_price < pos['entry_price'] - stop_distance:
                     triggered_action = 'stop_loss'
             else:
                 pos['best_price'] = min(pos.get('best_price', pos['entry_price']), current_price)
                 if current_price <= pos['entry_price'] - tp_distance:
                     triggered_action = 'take_profit'
-                elif current_price >= pos['best_price'] + atr * max(0.8, trail_multiplier):
+                elif ml_exit and current_price < pos['entry_price'] - fee_cost:
+                    triggered_action = 'ml_trend_exit'
+                elif current_price >= pos['best_price'] + atr * max(0.5, adaptive_trail):
                     triggered_action = 'trail_exit'
+                elif breakeven_active and current_price >= pos['entry_price'] - fee_cost * 0.5:
+                    triggered_action = 'breakeven_exit'
                 elif current_price > pos['entry_price'] + stop_distance:
                     triggered_action = 'stop_loss'
 
@@ -4748,14 +4790,19 @@ class UltimateGridStrategy(threading.Thread):
                 self.check_filled_orders(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, decision)
                 self.reconcile_orders()
 
-                # 检查止损
+                # 检查止损（含自适应trail+ML退出+保本线）
+                _vol_ratio = getattr(self, 'cached_volume_ratio', 1.0)
+                _recent_prices = list(self.price_history) if hasattr(self, 'price_history') else []
                 stop_action = self.stop_loss.check_stop(
                     self.symbol,
                     price,
                     atr_multiplier=decision["sl_mult"],
                     max_holding_hours=decision["max_holding_hours"],
                     trail_multiplier=decision["trail_mult"],
-                    liquidation_price=self.position_liquidation_price
+                    liquidation_price=self.position_liquidation_price,
+                    ml_predictor=getattr(self, 'ml_predictor', None),
+                    recent_prices=_recent_prices,
+                    volatility_ratio=_vol_ratio
                 )
                 if stop_action:
                     if not self._confirm_stop_action(stop_action, price):
@@ -5942,6 +5989,8 @@ class UltimateGridStrategy(threading.Thread):
         mapping = {
             "take_profit": 1.2,
             "trail_exit": 0.8,
+            "ml_trend_exit": 0.6,
+            "breakeven_exit": 0.1,
             "time_exit": -0.2,
             "stop_loss": -1.0
         }
