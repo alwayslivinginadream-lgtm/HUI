@@ -417,34 +417,34 @@ def api_call(func, *args, **kwargs):
     retry_count = int(API_RUNTIME_SETTINGS.get("api_retry_count", DEFAULT_CONFIG.get("api_retry_count", 5)))
     base_retry = float(API_RUNTIME_SETTINGS.get("api_base_retry_sec", DEFAULT_CONFIG.get("api_base_retry_sec", 1.5)))
     last_error = None
-    # 修复缺陷 6：将信号量移到重试循环外，确保重试期间不被插队
-    with API_SEMAPHORE:
-        for i in range(max(1, retry_count)):
-            try:
-                with API_RATE_LIMIT_LOCK:
-                    wait_sec = API_RATE_LIMIT_UNTIL - time.time()
-                if wait_sec > 0:
-                    time.sleep(wait_sec)
+    # 修复：信号量在每次请求时获取/释放，重试等待期间不占用
+    for i in range(max(1, retry_count)):
+        try:
+            with API_RATE_LIMIT_LOCK:
+                wait_sec = API_RATE_LIMIT_UNTIL - time.time()
+            if wait_sec > 0:
+                time.sleep(wait_sec)
+            with API_SEMAPHORE:
                 return func(*args, **kwargs)
-            except Exception as e:
-                last_error = e
-                is_rate_limit = is_rate_limit_error(e)
-                if is_rate_limit:
-                    hinted = extract_rate_limit_cooldown(e)
-                    if hinted is None:
-                        cooldown = min(20.0, base_retry * (2 ** i) + random.uniform(0.2, 1.0))
-                    else:
-                        cooldown = hinted
-                    with API_RATE_LIMIT_LOCK:
-                        API_RATE_LIMIT_UNTIL = max(API_RATE_LIMIT_UNTIL, time.time() + cooldown)
-                    time.sleep(cooldown)
-                elif i == retry_count - 1:
-                    raise
+        except Exception as e:
+            last_error = e
+            is_rate_limit = is_rate_limit_error(e)
+            if is_rate_limit:
+                hinted = extract_rate_limit_cooldown(e)
+                if hinted is None:
+                    cooldown = min(20.0, base_retry * (2 ** i) + random.uniform(0.2, 1.0))
                 else:
-                    time.sleep(min(8.0, base_retry + i))
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("api_call 执行失败")
+                    cooldown = hinted
+                with API_RATE_LIMIT_LOCK:
+                    API_RATE_LIMIT_UNTIL = max(API_RATE_LIMIT_UNTIL, time.time() + cooldown)
+                time.sleep(cooldown)
+            elif i == retry_count - 1:
+                raise
+            else:
+                time.sleep(min(8.0, base_retry + i))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("api_call 执行失败")
 
 class ExchangeInterface:
     def __init__(self, raw_exchange, log_callback=None):
@@ -1676,28 +1676,42 @@ class SentimentIndicator:
         self.value = 0.5
         self.last_update = 0
         self.update_interval = update_interval
+        self._fetch_thread = None
+        self._data_stale = False  # 数据是否过期
 
     def update(self):
         now = time.time()
         if now - self.last_update < self.update_interval:
             return self.value
 
+        # 异步获取，不阻塞策略线程
+        if self._fetch_thread is None or not self._fetch_thread.is_alive():
+            self._fetch_thread = threading.Thread(target=self._fetch_async, daemon=True)
+            self._fetch_thread.start()
+
+        # 如果超过2小时没更新成功，标记为不可信
+        if now - self.last_update > 7200:
+            self._data_stale = True
+
+        return self.value
+
+    def is_stale(self):
+        return self._data_stale
+
+    def _fetch_async(self):
         try:
-            # 调用 alternative.me 免费的恐慌贪婪指数 API
-            # 返回的数据结构类似：{"data": [{"value": "54", "value_classification": "Neutral", ...}]}
-            # 0=极度恐慌, 100=极度贪婪
             url = "https://api.alternative.me/fng/?limit=1"
-            response = requests.get(url, timeout=5)
+            response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if "data" in data and len(data["data"]) > 0:
                     fng_value = float(data["data"][0]["value"])
-                    # 将 0-100 映射到 0.0-1.0
                     self.value = fng_value / 100.0
-                    self.last_update = now
-                    return self.value
+                    self.last_update = time.time()
+                    self._data_stale = False
+                    return
         except Exception:
-            pass  # silent fallback
+            pass  # 网络失败不崩溃
 
         # 如果 API 失败，添加微小的随机游走以防止信号完全卡死
         self.value += random.uniform(-0.05, 0.05)
@@ -2409,9 +2423,25 @@ class BlackSwanDetector:
     def __init__(self, std_threshold=3.5):
         self.std_threshold = std_threshold
         self.price_history = deque(maxlen=100)
+        self.depth_history = deque(maxlen=20)  # 订单簿深度历史
+        self.last_alert_ts = 0
 
-    def update(self, price):
+    def update(self, price, orderbook_depth=None):
         self.price_history.append(price)
+
+        # ====== 订单簿深度萎缩检测 ======
+        if orderbook_depth is not None and orderbook_depth > 0:
+            self.depth_history.append(orderbook_depth)
+            if len(self.depth_history) >= 10:
+                avg_depth = np.mean(list(self.depth_history)[:-1])
+                current_depth = self.depth_history[-1]
+                if avg_depth > 0 and current_depth < avg_depth * 0.3:
+                    # 深度骤降70%以上，早期预警
+                    if time.time() - self.last_alert_ts > 300:
+                        self.last_alert_ts = time.time()
+                        return True
+
+        # ====== 原有价格标准差检测 ======
         if len(self.price_history) < 30:
             return False
         price_list = list(self.price_history)
@@ -2421,10 +2451,13 @@ class BlackSwanDetector:
         returns = np.diff(np.array(price_list, dtype=float)) / denom
         mean = np.mean(returns)
         std = np.std(returns)
+        if std <= 1e-10:
+            return False
         if price_list[-2] <= 0:
             return False
         last_return = (price - price_list[-2]) / price_list[-2]
         if abs(last_return - mean) > self.std_threshold * std:
+            self.last_alert_ts = time.time()
             return True
         return False
 
@@ -4486,19 +4519,29 @@ class UltimateGridStrategy(threading.Thread):
                 now_ts = time.time()
                 ohlcv_interval = max(15, int(self.config.get("strategy_ohlcv_interval_sec", 45)))
                 if (now_ts - self.last_ohlcv_fetch >= ohlcv_interval) or self.cached_atr <= 0:
-                    ohlcv = api_call(self.exchange.fetch_ohlcv, self.symbol, '1h', limit=20)
-                    df = pd.DataFrame(ohlcv, columns=['ts','o','h','l','c','v'])
-                    atr = calculate_atr(df['h'], df['l'], df['c'])
-                    volume = df['v'].iloc[-1]
-                    avg_volume = df['v'].rolling(20).mean().iloc[-1]
-                    volume_ratio = volume / avg_volume if avg_volume > 0 else 1.0
-                    self.cached_atr = atr
-                    self.cached_volume_ratio = volume_ratio
-                    # 缓存布林带供自适应入场使用
-                    _, bb_up, bb_low = calculate_bb_width(df['c'])
-                    self.cached_bb_upper = float(bb_up) if bb_up and math.isfinite(float(bb_up)) else 0.0
-                    self.cached_bb_lower = float(bb_low) if bb_low and math.isfinite(float(bb_low)) else 0.0
-                    self.last_ohlcv_fetch = now_ts
+                    try:
+                        ohlcv = api_call(self.exchange.fetch_ohlcv, self.symbol, '1h', limit=20)
+                        df = pd.DataFrame(ohlcv, columns=['ts','o','h','l','c','v'])
+                        atr = calculate_atr(df['h'], df['l'], df['c'])
+                        if atr <= 0 or not math.isfinite(atr):
+                            self.log_msg(f"⚠️ ATR计算异常({atr})，使用上次缓存值{self.cached_atr}", "WARNING")
+                            atr = self.cached_atr if self.cached_atr > 0 else self.last_price * 0.005
+                        volume = df['v'].iloc[-1]
+                        avg_volume = df['v'].rolling(20).mean().iloc[-1]
+                        volume_ratio = volume / avg_volume if avg_volume > 0 else 1.0
+                        self.cached_atr = atr
+                        self.cached_volume_ratio = volume_ratio
+                        # 缓存布林带供自适应入场使用
+                        _, bb_up, bb_low = calculate_bb_width(df['c'])
+                        self.cached_bb_upper = float(bb_up) if bb_up and math.isfinite(float(bb_up)) else 0.0
+                        self.cached_bb_lower = float(bb_low) if bb_low and math.isfinite(float(bb_low)) else 0.0
+                        self.last_ohlcv_fetch = now_ts
+                        self._data_trust = True
+                    except Exception as e:
+                        self.log_msg(f"⚠️ OHLCV获取失败: {e}，数据标记不可信", "WARNING")
+                        atr = self.cached_atr if self.cached_atr > 0 else self.last_price * 0.005
+                        volume_ratio = self.cached_volume_ratio if hasattr(self, 'cached_volume_ratio') else 1.0
+                        self._data_trust = False
                 else:
                     atr = self.cached_atr
                     volume_ratio = self.cached_volume_ratio
@@ -4725,8 +4768,19 @@ class UltimateGridStrategy(threading.Thread):
                     else:
                         self.log_msg(f"【第4层】平仓未成功，跳过退出记录", "WARNING")
 
-                # 黑天鹅检测
-                if self.blackswan.update(price):
+                # 黑天鹅检测（价格+订单簿深度双维度）
+                ob_depth = 0.0
+                try:
+                    ob = self.get_cached_orderbook(depth=5, force=False)
+                    if isinstance(ob, dict):
+                        bids = ob.get("bids", [])
+                        asks = ob.get("asks", [])
+                        bid_vol = sum(float(b[1]) for b in bids[:5]) if bids else 0
+                        ask_vol = sum(float(a[1]) for a in asks[:5]) if asks else 0
+                        ob_depth = bid_vol + ask_vol
+                except Exception:
+                    pass
+                if self.blackswan.update(price, orderbook_depth=ob_depth if ob_depth > 0 else None):
                     self.log_msg("【第15层】检测到黑天鹅！暂停交易", "WARNING")
                     self.circuit_break = True
                     self.circuit_break_since = time.time()
@@ -4818,6 +4872,10 @@ class UltimateGridStrategy(threading.Thread):
             reason = str(decision.get("reason", ""))
             if bool(self.config.get("execution_degraded", False)):
                 self.log_msg("执行容灾开启中，暂缓新开仓", "WARNING")
+                return False
+            # ====== 数据可信检查 ======
+            if hasattr(self, '_data_trust') and not self._data_trust:
+                self.log_msg("⚠️ 数据不可信（OHLCV获取失败），暂缓开仓", "WARNING")
                 return False
             # ====== 日亏损熔断检查 ======
             if hasattr(self, 'safety_monitor') and self.safety_monitor and self.safety_monitor.is_daily_fused():
