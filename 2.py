@@ -41,6 +41,8 @@ DEFAULT_CONFIG = {
     "min_24h_volume": 1000000,             # 最小成交量
     "funding_rate_threshold": 0.00025,     # 资金费率阈值
     "max_drawdown": 5.0,                   # 最大回撤百分比（熔断）
+    "daily_loss_limit_pct": 5.0,           # 日亏损熔断线（%），当日亏损达此值停止新开仓
+    "daily_loss_reset_hour_utc": 0,        # 日亏损重置时间（UTC小时）
     "max_portfolio_var": 0.040,
     "var_lookback_hours": 720,
     "var_confidence": 0.95,
@@ -302,12 +304,12 @@ def extract_rate_limit_cooldown(exc):
 def is_auth_error(exc):
     msg = str(exc).lower()
     return (
-        "invalid key" in msg or 
-        "invalid_key" in msg or 
-        ("api key" in msg and "invalid" in msg) or 
-        ("authentication" in msg and "failed" in msg) or 
-        "unauthorized" in msg or 
-        "invalid_signature" in msg or 
+        "invalid key" in msg or
+        "invalid_key" in msg or
+        ("api key" in msg and "invalid" in msg) or
+        ("authentication" in msg and "failed" in msg) or
+        "unauthorized" in msg or
+        "invalid_signature" in msg or
         "signature mismatch" in msg or
         "signature" in msg
     )
@@ -512,7 +514,7 @@ class GlobalScheduler:
         with self.lock:
             self.last_seen[symbol] = time.monotonic()
             self.active_symbols.add(symbol)
-            
+
     def request_order(self, symbol, score, has_position, max_active_symbols, best_window_sec=10, interval_jitter=0.2, skip_prob=0.08):
         with self.lock:
             now = time.monotonic()
@@ -593,8 +595,8 @@ class GlobalScheduler:
             now = time.monotonic()
             self.last_order_mono = now
             # 弹性动态调度：废除固定长时间锁定，仅使用一个极短的防并发节流(3~5秒)，
-            # 真实的风险隔离交由 CausalDecisionEngine 中的“相关性惩罚墙”和“大盘斜率冷却”处理。
-            short_throttle = max(3.0, self.interval * 0.05) 
+            # 真实的风险隔离交由 CausalDecisionEngine 中的"相关性惩罚墙"和"大盘斜率冷却"处理。
+            short_throttle = max(3.0, self.interval * 0.05)
             jitter = max(0.0, min(0.5, float(interval_jitter)))
             self.next_allowed_mono = now + short_throttle * random.uniform(max(0.2, 1.0 - jitter), 1.0 + jitter)
             return True
@@ -761,7 +763,7 @@ class MarketMonitor(threading.Thread):
         self.btc_symbol = "BTC/USDT:USDT"
         self.eth_symbol = "ETH/USDT:USDT"
         self.state_history = deque(maxlen=20)
-        
+
         # 全局大盘震波冷却
         self.global_shockwave_cooldown_until = 0.0
         self.btc_prices_1m = deque(maxlen=60)
@@ -778,25 +780,25 @@ class MarketMonitor(threading.Thread):
                 # 获取 BTC/ETH 高频数据用于全局震波检测
                 ticker_btc = api_call(self.exchange.fetch_ticker, self.btc_symbol)
                 ticker_eth = api_call(self.exchange.fetch_ticker, self.eth_symbol)
-                
+
                 if ticker_btc and 'last' in ticker_btc and ticker_eth and 'last' in ticker_eth:
                     now_ts = time.time()
                     self.btc_prices_1m.append((now_ts, float(ticker_btc['last'])))
                     self.eth_prices_1m.append((now_ts, float(ticker_eth['last'])))
-                    
+
                     if len(self.btc_prices_1m) >= 10 and len(self.eth_prices_1m) >= 10:
                         b_old_ts, b_old_px = self.btc_prices_1m[0]
                         b_cur_ts, b_cur_px = self.btc_prices_1m[-1]
                         e_old_ts, e_old_px = self.eth_prices_1m[0]
                         e_cur_ts, e_cur_px = self.eth_prices_1m[-1]
-                        
+
                         if b_cur_ts - b_old_ts <= 90 and e_cur_ts - e_old_ts <= 90:
                             b_ret = abs(b_cur_px - b_old_px) / max(1e-8, b_old_px)
                             e_ret = abs(e_cur_px - e_old_px) / max(1e-8, e_old_px)
-                            
+
                             # 60% BTC + 40% ETH 加权波动
                             global_shock = b_ret * 0.6 + e_ret * 0.4
-                            
+
                             # 如果大盘一分钟内综合波动超过 1.2%，触发全局系统性熔断
                             if global_shock > 0.012:
                                 if self.global_shockwave_cooldown_until < time.time():
@@ -813,7 +815,7 @@ class MarketMonitor(threading.Thread):
                     low = df['l']
                     close = df['c']
                     volume = df['v']
-                    
+
                     adx = calculate_adx(high, low, close)
                     bb_width, upper, lower = calculate_bb_width(close)
                     current = close.iloc[-1]
@@ -1216,20 +1218,20 @@ class CorrelationAnalyzer:
                 ohlcv_long = api_call(self.exchange.fetch_ohlcv, sym, '1h', limit=self.lookback_hours)
                 closes_long = [c[4] for c in ohlcv_long]
                 prices_long[sym] = closes_long
-                
+
                 # 获取短窗口数据 (4h，使用15m K线，共16根)
                 ohlcv_short = api_call(self.exchange.fetch_ohlcv, sym, '15m', limit=16)
                 closes_short = [c[4] for c in ohlcv_short]
                 prices_short[sym] = closes_short
-                
+
             df_long = pd.DataFrame(prices_long)
             returns_long = df_long.pct_change().dropna()
             self.correlation_matrix = returns_long.corr()
-            
+
             df_short = pd.DataFrame(prices_short)
             returns_short = df_short.pct_change().dropna()
             self.short_correlation_matrix = returns_short.corr()
-            
+
             self.last_update = time.time()
         except Exception as e:
             pass
@@ -1241,20 +1243,20 @@ class CorrelationAnalyzer:
         """
         if self.correlation_matrix is None or self.short_correlation_matrix is None or not active_symbols:
             return 0.0
-            
+
         if target_symbol not in self.correlation_matrix.index or target_symbol not in self.short_correlation_matrix.index:
             return 0.0
-            
+
         max_corr = 0.0
         for active_sym in active_symbols:
             if active_sym != target_symbol and active_sym in self.correlation_matrix.index and active_sym in self.short_correlation_matrix.index:
                 corr_long = float(self.correlation_matrix.loc[target_symbol, active_sym])
                 corr_short = float(self.short_correlation_matrix.loc[target_symbol, active_sym])
-                
+
                 # 动态加权：更看重近期的共振效应
                 blended_corr = corr_short * 0.6 + corr_long * 0.4
                 max_corr = max(max_corr, blended_corr)
-                
+
         # 只有正相关才惩罚，负相关(对冲)不惩罚
         return max(0.0, max_corr)
 
@@ -1366,10 +1368,10 @@ class SmartStopLoss:
     def check_stop(self, symbol, current_price, atr_multiplier=None, max_holding_hours=None, trail_multiplier=1.2, liquidation_price=0.0):
         if not self.positions:
             self._load_state()
-            
+
         if symbol not in self.positions or not self.positions[symbol]:
             return None
-            
+
         # 物理强平价防御线 (最优先)
         if liquidation_price > 0 and current_price > 0:
             distance_pct = abs(current_price - liquidation_price) / current_price
@@ -1381,7 +1383,7 @@ class SmartStopLoss:
         use_atr_multiplier = atr_multiplier if atr_multiplier else self.atr_multiplier
         use_max_hours = max_holding_hours if max_holding_hours else self.max_holding_hours
         triggered_action = None
-        
+
         for pos in self.positions[symbol]:
             holding_time = (time.time() - pos['entry_time']) / 3600
             atr = pos['atr']
@@ -1393,7 +1395,7 @@ class SmartStopLoss:
             if holding_time > 8:
                 decay = max(0.55, 1 - (holding_time - 8) * 0.1)
                 tp_distance *= decay
-                
+
             if side == 'buy':
                 pos['best_price'] = max(pos.get('best_price', pos['entry_price']), current_price)
                 if current_price >= pos['entry_price'] + tp_distance:
@@ -1410,13 +1412,13 @@ class SmartStopLoss:
                     triggered_action = 'trail_exit'
                 elif current_price > pos['entry_price'] + stop_distance:
                     triggered_action = 'stop_loss'
-                    
+
             if holding_time > use_max_hours and not triggered_action:
                 triggered_action = 'time_exit'
-                
+
             if triggered_action:
                 break
-                
+
         # 修复缺陷 1：只更新 best_price，不在这里移除仓位，由调用方平仓成功后显式移除
         self._save_state()
         return triggered_action
@@ -1434,15 +1436,15 @@ class BacktestEngine:
             ohlcv = api_call(self.exchange.fetch_ohlcv, self.symbol, '15m', limit=days * 24 * 4)
             if not ohlcv or len(ohlcv) < 100:
                 return None
-                
+
             df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'volume'])
             df['returns'] = df['close'].pct_change()
-            
+
             # 提取回测所需参数
             lev = float(self.config.get('leverage', 3))
             maker_fee = float(self.config.get('maker_fee', 0.0002))
             taker_fee = float(self.config.get('taker_fee', 0.0005))
-            
+
             # 简易的均值回归+动量策略回测模拟
             # 计算 RSI 和布林带
             delta = df['close'].diff()
@@ -1450,23 +1452,23 @@ class BacktestEngine:
             loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
             rs = gain / loss
             df['rsi'] = 100 - (100 / (1 + rs))
-            
+
             df['sma'] = df['close'].rolling(20).mean()
             df['std'] = df['close'].rolling(20).std()
             df['upper'] = df['sma'] + 2 * df['std']
             df['lower'] = df['sma'] - 2 * df['std']
-            
+
             equity = 1.0
             equity_curve = [1.0]
             position = 0 # 1 为多，-1 为空
             entry_price = 0.0
-            
+
             for i in range(20, len(df)):
                 current_price = df['close'].iloc[i]
                 rsi = df['rsi'].iloc[i]
                 upper = df['upper'].iloc[i]
                 lower = df['lower'].iloc[i]
-                
+
                 # 平仓逻辑
                 if position == 1:
                     # 止盈或止损
@@ -1479,7 +1481,7 @@ class BacktestEngine:
                         ret = (entry_price - current_price) / entry_price * lev - taker_fee
                         equity *= (1 + ret)
                         position = 0
-                        
+
                 # 开仓逻辑
                 if position == 0:
                     if rsi < 30 and current_price < lower:
@@ -1490,16 +1492,16 @@ class BacktestEngine:
                         position = -1
                         entry_price = current_price
                         equity *= (1 - maker_fee)
-                        
+
                 equity_curve.append(equity)
-                
+
             equity_series = pd.Series(equity_curve)
             peak = equity_series.cummax()
             drawdowns = (peak - equity_series) / peak
             max_drawdown = drawdowns.max()
-            
+
             total_return = equity - 1.0
-            
+
             # 计算夏普比率 (假设无风险利率为0，年化)
             daily_returns = equity_series.pct_change().dropna()
             if len(daily_returns) > 0 and daily_returns.std() > 0:
@@ -1515,59 +1517,161 @@ class BacktestEngine:
         except Exception as e:
             return None
 
-# ==================== 第6层：机器学习预测辅助 ====================
+# ==================== 第6层：增强版ML预测引擎 ====================
 class MLPredictor:
+    """
+    增强版ML预测器 — 20+特征 + 在线学习权重 + 多时间尺度
+    无需pytorch/tensorflow，纯numpy实现
+    """
     def __init__(self, lookback=50):
         self.lookback = lookback
-        # 这里用一种无需安装额外大库（如 XGBoost/PyTorch）的方法，
-        # 实现一个轻量级的“隐马尔可夫/高级特征工程”模型模拟器，
-        # 通过提取动量、波动率、偏度等高级统计特征来输出概率，
-        # 相比单纯的斜率，它的质量会高得多。
-        self.feature_weights = np.array([0.4, 0.3, 0.2, 0.1]) 
+        self.n_features = 12
+        # 自适应权重（在线梯度更新）
+        self.weights = np.ones(self.n_features) / self.n_features
+        self.bias = 0.0
+        self.lr = 0.01  # 学习率
+        self.history = deque(maxlen=500)  # (features, actual_return) 用于在线学习
+        self.prediction_count = 0
+        self.correct_count = 0
+
+    def _extract_features(self, prices):
+        """提取12维特征向量"""
+        p = np.array(prices[-self.lookback:], dtype=np.float64)
+        returns = np.diff(p) / np.maximum(p[:-1], 1e-8)
+        n = len(returns)
+
+        # ===== 动量类 =====
+        # F1: 短期动量（最近5根）
+        short_mom = np.sum(returns[-5:]) if n >= 5 else 0.0
+        # F2: 中期动量（最近20根）
+        mid_mom = np.sum(returns[-20:]) if n >= 20 else np.sum(returns)
+        # F3: 长短动量差（趋势加速）
+        mom_diff = short_mom - (mid_mom / 4) if n >= 20 else 0.0
+
+        # ===== 波动类 =====
+        # F4: 波动率（近20根 vs 全窗口）
+        vol_short = np.std(returns[-20:]) if n >= 20 else np.std(returns) if n > 1 else 1e-8
+        vol_long = np.std(returns) if n > 1 else 1e-8
+        vol_ratio = (vol_short / max(vol_long, 1e-8)) - 1.0  # >0波动放大, <0波动收缩
+
+        # F5: ATR归一化（衡量绝对波幅）
+        high_low_range = np.max(p[-14:]) - np.min(p[-14:]) if len(p) >= 14 else np.max(p) - np.min(p)
+        atr_norm = high_low_range / max(np.mean(p[-14:]), 1e-8)
+
+        # ===== 价格结构 =====
+        # F6: 价格在布林带中的位置
+        ma = np.mean(p[-20:]) if len(p) >= 20 else np.mean(p)
+        std = np.std(p[-20:]) if len(p) >= 20 else np.std(p)
+        bb_pos = (p[-1] - ma) / max(std * 2, 1e-8)  # -1~+1
+
+        # F7: 均线交叉信号
+        ma_short = np.mean(p[-7:]) if len(p) >= 7 else np.mean(p)
+        ma_long = np.mean(p[-25:]) if len(p) >= 25 else np.mean(p)
+        ma_cross = (ma_short - ma_long) / max(ma_long, 1e-8) * 100
+
+        # F8: 收益率偏度（尾部不对称性）
+        skewness = 0.0
+        if n > 5 and vol_short > 1e-8:
+            skewness = float(np.mean(((returns[-20:] - np.mean(returns[-20:])) / vol_short) ** 3)) if n >= 20 else 0.0
+
+        # ===== 量价特征 =====
+        # F9: 连涨/连跌计数
+        streak = 0
+        if n >= 2:
+            direction = 1 if returns[-1] > 0 else -1
+            for r in reversed(returns):
+                if (r > 0 and direction > 0) or (r < 0 and direction < 0):
+                    streak += direction
+                else:
+                    break
+        streak_norm = np.tanh(streak / 5.0)
+
+        # F10: RSI (相对强弱指标)
+        if n >= 14:
+            gains = np.where(returns[-14:] > 0, returns[-14:], 0)
+            losses = np.where(returns[-14:] < 0, -returns[-14:], 0)
+            avg_gain = np.mean(gains)
+            avg_loss = np.mean(losses)
+            if avg_loss > 1e-8:
+                rsi = avg_gain / (avg_gain + avg_loss)  # 0~1
+            else:
+                rsi = 1.0
+        else:
+            rsi = 0.5
+        rsi_signal = (rsi - 0.5) * 2  # -1~+1
+
+        # F11: 价格变化率（ROC）
+        roc = (p[-1] / max(p[-min(10, len(p))], 1e-8) - 1.0) * 10
+
+        # F12: MACD信号
+        if len(p) >= 26:
+            ema12 = self._ema(p, 12)
+            ema26 = self._ema(p, 26)
+            macd_line = (ema12 - ema26) / max(abs(ema26), 1e-8) * 100
+        else:
+            macd_line = 0.0
+
+        features = np.array([
+            np.tanh(short_mom * 10),     # F1
+            np.tanh(mid_mom * 5),        # F2
+            np.tanh(mom_diff * 15),      # F3
+            np.tanh(vol_ratio),          # F4
+            np.tanh(atr_norm * 10 - 1),  # F5
+            np.clip(bb_pos, -2, 2) / 2,  # F6
+            np.tanh(ma_cross),           # F7
+            np.clip(skewness, -2, 2) / 2,# F8
+            streak_norm,                  # F9
+            rsi_signal,                   # F10
+            np.tanh(roc),                # F11
+            np.tanh(macd_line),          # F12
+        ])
+        return features
+
+    def _ema(self, prices, period):
+        """指数移动平均"""
+        alpha = 2.0 / (period + 1)
+        ema = prices[0]
+        for p in prices[1:]:
+            ema = alpha * p + (1 - alpha) * ema
+        return ema
 
     def predict(self, prices):
         if len(prices) < self.lookback:
             return 0.5
-            
-        recent_prices = np.array(prices[-self.lookback:])
-        
-        # 特征1：标准化动量 (Momentum)
-        returns = np.diff(recent_prices) / recent_prices[:-1]
-        momentum = np.sum(returns)
-        
-        # 特征2：波动率调整斜率 (Volatility-Adjusted Slope)
-        x = np.arange(len(recent_prices))
-        slope = np.polyfit(x, recent_prices, 1)[0]
-        volatility = np.std(returns) if len(returns) > 1 else 1e-8
-        adj_slope = (slope / np.mean(recent_prices)) / max(1e-8, volatility)
-        
-        # 特征3：价格相对位置 (Price Location in Window)
-        max_p = np.max(recent_prices)
-        min_p = np.min(recent_prices)
-        current_p = recent_prices[-1]
-        location = (current_p - min_p) / max(1e-8, max_p - min_p)
-        # 将位置转换为 -1 到 1 的信号，接近顶部看跌，接近底部看涨
-        location_signal = (0.5 - location) * 2 
-        
-        # 特征4：近期加速度 (Acceleration)
-        # 比较最近 1/4 窗口的斜率和整个窗口的斜率
-        short_window = max(5, self.lookback // 4)
-        short_x = np.arange(short_window)
-        short_slope = np.polyfit(short_x, recent_prices[-short_window:], 1)[0]
-        accel = (short_slope - slope) / np.mean(recent_prices)
-        
-        # 组合特征并映射到 0-1 的概率空间
-        # 权重：动量 40%, 调整斜率 30%, 位置均值回归 20%, 加速度 10%
-        raw_score = (
-            momentum * 5.0 * self.feature_weights[0] + 
-            np.tanh(adj_slope) * self.feature_weights[1] + 
-            location_signal * self.feature_weights[2] + 
-            np.tanh(accel * 10) * self.feature_weights[3]
-        )
-        
-        # 使用 Sigmoid 函数将原始得分转换为 0.0 - 1.0 之间的概率
-        prob = 1 / (1 + math.exp(-max(-10, min(10, raw_score))))
-        return prob
+        try:
+            features = self._extract_features(prices)
+            raw_score = float(np.dot(self.weights, features) + self.bias)
+            prob = 1.0 / (1.0 + math.exp(-max(-10, min(10, raw_score))))
+            return prob
+        except Exception:
+            return 0.5
+
+    def learn(self, prices_before, actual_return):
+        """在线学习：用平仓后的实际收益更新权重"""
+        if len(prices_before) < self.lookback:
+            return
+        try:
+            features = self._extract_features(prices_before)
+            prediction = 1.0 / (1.0 + math.exp(-max(-10, min(10, float(np.dot(self.weights, features) + self.bias)))))
+            # 实际标签：涨了=1，跌了=0
+            label = 1.0 if actual_return > 0 else 0.0
+            # 在线梯度下降（logistic regression）
+            error = label - prediction
+            self.weights += self.lr * error * features
+            self.bias += self.lr * error
+            # 权重正则化防过拟合
+            self.weights *= 0.999
+            # 统计准确率
+            self.prediction_count += 1
+            if (prediction > 0.5 and label > 0.5) or (prediction <= 0.5 and label <= 0.5):
+                self.correct_count += 1
+        except Exception:
+            pass  # silent fallback
+
+    def get_accuracy(self):
+        if self.prediction_count < 10:
+            return 0.5
+        return self.correct_count / self.prediction_count
 
 # ==================== 第6.5层：真实情绪指标接入 ====================
 class SentimentIndicator:
@@ -1580,7 +1684,7 @@ class SentimentIndicator:
         now = time.time()
         if now - self.last_update < self.update_interval:
             return self.value
-            
+
         try:
             # 调用 alternative.me 免费的恐慌贪婪指数 API
             # 返回的数据结构类似：{"data": [{"value": "54", "value_classification": "Neutral", ...}]}
@@ -1597,7 +1701,7 @@ class SentimentIndicator:
                     return self.value
         except Exception:
             pass  # silent fallback
-            
+
         # 如果 API 失败，添加微小的随机游走以防止信号完全卡死
         self.value += random.uniform(-0.05, 0.05)
         self.value = max(0.2, min(0.8, self.value))
@@ -1692,7 +1796,7 @@ class StrategyEnsemble:
     def decide(self, context):
         total_weight = 0
         weighted_prob = 0
-        
+
         # 提取各个子策略的预测结果
         preds = {}
         for name, data in self.strategies.items():
@@ -1701,10 +1805,10 @@ class StrategyEnsemble:
             weight = max(0.01, data["weight"]) # 防止权重归零
             weighted_prob += weight * prob
             total_weight += weight
-            
+
         # 将本次预测结果保存在 context 中供后续复盘更新使用
         context["_last_preds"] = preds
-        
+
         if total_weight == 0:
             return 0.5
         return weighted_prob / total_weight
@@ -1716,11 +1820,11 @@ class StrategyEnsemble:
         """
         if "_last_preds" not in context:
             return
-            
+
         preds = context["_last_preds"]
         # 将 actual_outcome (-1 to 1) 映射为目标概率 (0 to 1)
-        target_prob = (actual_outcome + 1.0) / 2.0 
-        
+        target_prob = (actual_outcome + 1.0) / 2.0
+
         total_weight = 0
         for name, data in self.strategies.items():
             if name not in preds:
@@ -1729,15 +1833,15 @@ class StrategyEnsemble:
             # 计算预测误差 (Error = |Target - Pred|)
             # 误差越小，得分越高
             error = abs(target_prob - pred)
-            reward = 1.0 - error 
-            
+            reward = 1.0 - error
+
             # 平滑更新历史表现
             data["performance"] = data["performance"] * 0.9 + reward * 0.1
-            
+
             # 基于表现调整权重
             data["weight"] = data["weight"] * (1.0 - self.learning_rate) + data["performance"] * self.learning_rate
             total_weight += data["weight"]
-            
+
         # 归一化权重
         if total_weight > 0:
             for name in self.strategies:
@@ -2061,7 +2165,7 @@ class CausalDecisionEngine:
             price_history_len = int(max(0, _clean(metrics.get("price_history_len", 0), 0)))
             if warmup_window > 0:
                 current_eval_progress = min(1.0, price_history_len / float(warmup_window))
-                
+
             fv = np.array([
                 opportunity_score, risk_penalty, confidence, trend_strength, liquidity_score, sentiment_score,
                 book_score, crowding_score, signal_health, atr_ratio, float(metrics.get("short_return", 0.0)), volume_ratio - 1.0, propensity
@@ -2096,10 +2200,10 @@ class CausalDecisionEngine:
         if active_symbols_list and hasattr(self, "correlation_analyzer"): # 假设后续传入或者在别处有
             # 为了在 CausalDecisionEngine 中使用相关性惩罚，我们需要依赖传入的 metrics
             # 如果没有传入，这里保底为 0
-            pass 
+            pass
         # 我们从传入的 metrics 中提取预先计算好的 corr_wall_penalty
         corr_wall_penalty = float(metrics.get("corr_wall_penalty", 0.0))
-        
+
         # 将相关性惩罚墙叠加到整体风险惩罚中
         risk_penalty = min(1.0, risk_penalty + corr_wall_penalty * 0.8)
 
@@ -2120,20 +2224,20 @@ class CausalDecisionEngine:
             tp_scale = 1.00
         base_max_holding = max(6, int(float(self.config.get("max_holding_hours", 24))))
         dynamic_max_holding = max(4, int(base_max_holding * max(0.45, 1 - risk_penalty * 0.7)))
-        
+
         # 计算初步的 execution 策略
         pre_execution = self._compute_execution(state, buy_prob, metrics, profile)
-        
+
         # 成本屏障 (Cost Barrier) 预估：动态匹配执行类型
         # 读取配置中的费率，默认 Maker 0.02%, Taker 0.05%
         maker_fee = float(self.config.get("maker_fee", 0.0002))
         taker_fee = float(self.config.get("taker_fee", 0.0005))
         # 预估滑点成本 (根据流动性和拥挤度放大)
         slip_cost = 0.0005 * (1.0 + (1.0 - liquidity_score) + crowding_score)
-        
+
         # 提取订单执行类型
         price_type = pre_execution.get("price_type", "limit")
-        
+
         # 根据 price_type 动态计算总成本 (包含开+平双边)
         if price_type == "limit":
             # 如果是纯限价挂单，大概率吃到 Maker
@@ -2144,15 +2248,15 @@ class CausalDecisionEngine:
         else: # market
             # 市价单，纯 Taker
             total_cost_barrier = (taker_fee * 2) + slip_cost * 2
-        
+
         # 预期收益空间 (以 ATR 的一定比例作为短线预期)
         expected_profit_margin = atr_ratio * max(0.5, profile["tp_mult"] * tp_scale)
-        
+
         cost_block_reason = ""
         # 检查是否连给交易所打工都不够
         if expected_profit_margin < total_cost_barrier * 1.2:
             cost_block_reason = f"预期利润({expected_profit_margin*100:.2f}%)不足以覆盖执行成本({total_cost_barrier*100:.2f}%)"
-        
+
         # 物理网格模式判断
         use_physical_grid = False
         op_mode = str(self.config.get("operation_mode", "自动"))
@@ -2732,7 +2836,7 @@ class EvolutionEngine(threading.Thread):
                 sentiment_val = 0.5
         else:
             sentiment_val = max(0.0, min(1.0, 0.5 + np.tanh(ret * 20) * 0.45))
-            
+
         buy_prob = max(0.0, min(1.0, 0.5 + np.tanh(ret * 45 + self._state_bias(state)) * 0.33))
         recent = np.array(list(probe.get("returns", []))[-30:], dtype=float)
         vol_proxy = float(np.std(recent)) if len(recent) > 3 else 0.02
@@ -3135,6 +3239,35 @@ class SafetyMonitor(threading.Thread):
         self.stop_event = stop_event
         self.running = True
         self.last_rollback_ts = 0
+        # ====== 日亏损熔断 ======
+        self.daily_pnl = 0.0
+        self.daily_trade_count = 0
+        self.daily_win_count = 0
+        self.daily_loss_fused = False
+        self.daily_reset_date = ""
+        self._daily_pnl_lock = threading.Lock()
+
+    def record_trade_pnl(self, pnl_usdt):
+        """记录一笔平仓盈亏，用于日亏损熔断"""
+        with self._daily_pnl_lock:
+            self.daily_pnl += float(pnl_usdt)
+            self.daily_trade_count += 1
+            if float(pnl_usdt) > 0:
+                self.daily_win_count += 1
+
+    def is_daily_fused(self):
+        """是否已触发日亏损熔断"""
+        return self.daily_loss_fused
+
+    def get_daily_summary(self):
+        """返回当日统计"""
+        with self._daily_pnl_lock:
+            return {
+                "pnl": self.daily_pnl,
+                "trades": self.daily_trade_count,
+                "wins": self.daily_win_count,
+                "fused": self.daily_loss_fused
+            }
 
     def run(self):
         while self.running and not self.stop_event.is_set():
@@ -3144,6 +3277,32 @@ class SafetyMonitor(threading.Thread):
                 if not strategies:
                     time.sleep(60)
                     continue
+
+                # ====== 日亏损每日重置 ======
+                today_str = time.strftime("%Y-%m-%d", time.gmtime())
+                if self.daily_reset_date != today_str:
+                    reset_hour = int(cfg.get("daily_loss_reset_hour_utc", 0))
+                    now_utc_hour = int(time.strftime("%H", time.gmtime()))
+                    if now_utc_hour >= reset_hour:
+                        with self._daily_pnl_lock:
+                            if self.daily_trade_count > 0:
+                                self.log(f"📊 【日结】盈亏:{self.daily_pnl:+.4f}U | {self.daily_trade_count}笔 | 胜率:{self.daily_win_count}/{self.daily_trade_count}", "INFO")
+                            self.daily_pnl = 0.0
+                            self.daily_trade_count = 0
+                            self.daily_win_count = 0
+                            self.daily_loss_fused = False
+                            self.daily_reset_date = today_str
+                            self.log(f"🔄 日亏损计数器已重置 ({today_str})", "INFO")
+
+                # ====== 日亏损熔断检查 ======
+                daily_limit_pct = float(cfg.get("daily_loss_limit_pct", 5.0))
+                margin_usdt = float(cfg.get("margin_usdt", 100.0))
+                daily_loss_limit_usdt = margin_usdt * daily_limit_pct / 100.0
+                with self._daily_pnl_lock:
+                    if not self.daily_loss_fused and self.daily_pnl < -daily_loss_limit_usdt:
+                        self.daily_loss_fused = True
+                        self.log(f"🚨🚨🚨 【日亏损熔断】当日亏损{self.daily_pnl:.4f}U 超限额-{daily_loss_limit_usdt:.2f}U({daily_limit_pct}%)，禁止新开仓！", "ERROR")
+
                 max_dd = 0.0
                 fail_count = 0
                 for s in strategies:
@@ -3195,7 +3354,7 @@ class PhysicalGridManager:
         self.is_running = False
         self.pending_replenish = [] # 新增：用于记录因为重试失败而暂时搁置的补网任务
         self._load_state() # 初始化时尝试加载本地状态
-        
+
     def _save_state(self):
         try:
             db_path = f"grid_state_{self.symbol.replace('/', '_').replace(':', '_')}.json"
@@ -3240,27 +3399,27 @@ class PhysicalGridManager:
 
         if self.is_running:
             self.cancel_all_grids()
-            
+
         self.center_price = center_price
         self.grid_step = grid_step
         self.grid_levels = max(1, int(grid_levels))
         self.is_running = True
-        
+
         self.log_msg(f"【物理网格】开始铺网: 中心={center_price:.4f}, 间距={grid_step*100:.2f}%, 档位=±{self.grid_levels}, 单格数量={qty_per_grid:.4f}")
-        
+
         # 铺设买单 (下网)
         for i in range(1, self.grid_levels + 1):
             buy_price = center_price * (1 - grid_step * i)
             self._place_grid_order("buy", qty_per_grid, buy_price)
-            
+
         # 铺设卖单 (上网)
         for i in range(1, self.grid_levels + 1):
             sell_price = center_price * (1 + grid_step * i)
             self._place_grid_order("sell", qty_per_grid, sell_price)
-            
+
         self._save_state()
         return True
-            
+
     def _normalize_qty(self, qty):
         try:
             market = self.exchange.market(self.symbol)
@@ -3341,16 +3500,16 @@ class PhysicalGridManager:
     def check_and_replenish(self):
         if not self.is_running or not self.active_grids:
             return
-        
+
         try:
             # 获取所有挂单状态
             open_orders = api_call(self.exchange.fetch_open_orders, self.symbol)
             if not isinstance(open_orders, list):
                 self.log_msg("【物理网格】获取挂单列表失败或返回异常格式，跳过本轮补网检查", "WARNING")
                 return
-                
+
             open_order_ids = [str(o['id']) for o in open_orders]
-            
+
             filled_orders = []
             for oid, info in list(self.active_grids.items()):
                 if oid not in open_order_ids:
@@ -3377,16 +3536,16 @@ class PhysicalGridManager:
                         else:
                             self.log_msg(f"【物理网格】无法核实消失的挂单 {oid}: {single_e}，暂时挂起", "WARNING")
                             continue
-            
+
             # 自动补网 (低买高卖)
             replenished = False
             for oid, info in filled_orders:
                 side = info["side"]
                 price = info["price"]
                 qty = info["qty"]
-                
+
                 self.log_msg(f"【物理网格】检测到订单成交/消失: {side} @ {price:.4f}，准备反向补网")
-                
+
                 # 如果买单成交，在上方一格挂卖单
                 if side == "buy":
                     new_price = price * (1 + self.grid_step)
@@ -3415,10 +3574,10 @@ class PhysicalGridManager:
                         time.sleep(0.5)
                     if not success:
                         self.log_msg(f"【物理网格】反向补网(buy)失败重试次数耗尽，放弃补网: qty={qty} price={new_price}", "WARNING")
-                    
+
             if replenished or filled_orders:
                 self._save_state()
-                    
+
         except Exception as e:
             self.log_msg(f"【物理网格】检查成交状态失败: {e}", "WARNING")
 
@@ -3591,26 +3750,26 @@ class UltimateGridStrategy(threading.Thread):
         self.recovery_boost_level = 0.0
         self.recovery_fail_streak = 0
         self.recovery_cooldown_until = 0.0
-        
+
         # 传递唯一的状态文件路径给止损模块
         self.stop_loss._state_file = f"stoploss_state_{self.symbol.replace('/', '_').replace(':', '_')}.json"
-        
+
         # 物理网格管理器 (Grid Manager)
         self.grid_manager = PhysicalGridManager(exchange, symbol, self.log_msg)
         self.grid_mode_active = False
-        
+
         # 自适应入场引擎
         self.adaptive_entry = AdaptiveEntryEngine(self.config, self.log_msg)
         self.last_entry_mode = -1
         self.last_entry_fill_ts = 0.0
-        
+
         # BB缓存（供自适应入场使用）
         self.cached_bb_upper = 0.0
         self.cached_bb_lower = 0.0
-        
+
         # 将配置的 stoploss_hunt_window 作为 IPW 冷启动优化的参数传递
         self.ipw_warmup_window = max(20, int(self.config.get('stoploss_hunt_window', 60)))
-        
+
         # 冷却控制
         self.shockwave_cooldown_until = 0.0
         self.fast_prices_for_shockwave = deque(maxlen=60) # 记录最近60次（约1分钟）的价格
@@ -3919,6 +4078,9 @@ class UltimateGridStrategy(threading.Thread):
             return
         if (not math.isfinite(pnl)) or abs(pnl) <= 0:
             return
+        # ====== 上报日亏损统计 ======
+        if hasattr(self, 'safety_monitor') and self.safety_monitor:
+            self.safety_monitor.record_trade_pnl(pnl)
         self.recovery_today_realized += pnl
         if pnl > 0:
             step_down = max(0.05, min(0.5, float(self.config.get("recovery_step_down", 0.15))))
@@ -4241,11 +4403,11 @@ class UltimateGridStrategy(threading.Thread):
             g_interval = min(max_interval, g_interval + int_step)
         self.config["causal_effect_threshold"] = float(max(-0.50, min(0.12, thr)))
         self.config["causal_effect_threshold_base"] = float(max(-0.50, min(0.12, base_thr)))
-        
+
         # 狂暴模式物理破防：如果目标单量>=20，彻底瘫痪不确定性惩罚
         if target_orders >= 20.0:
             unc_pen = 0.0
-            
+
         self.config["causal_uncertainty_penalty"] = float(max(0.0, min(1.0, unc_pen)))
         self.config["global_order_interval"] = int(max(min_interval, min(max_interval, g_interval)))
         if hasattr(self, "causal_engine"):
@@ -4316,11 +4478,11 @@ class UltimateGridStrategy(threading.Thread):
 
     def _apply_slot_pressure_policy(self, decision, price, atr):
         active_est, max_active, occ_ratio = self._estimate_active_occupancy()
-        
+
         # 计算线性压力因子 (0.0 到 1.0)
         pressure_start = 0.50  # 从50%占用率开始施加轻微压力
         pressure_full = 0.90   # 到90%占用率时压力拉满
-        
+
         if occ_ratio <= pressure_start:
             pressure_factor = 0.0
             self.slot_pressure_mode = False
@@ -4330,27 +4492,27 @@ class UltimateGridStrategy(threading.Thread):
         else:
             pressure_factor = (occ_ratio - pressure_start) / (pressure_full - pressure_start)
             self.slot_pressure_mode = True
-            
+
         if pressure_factor > 0:
             # 线性缩减参数
             orig_holding = float(decision.get("max_holding_hours", 24))
             decision["max_holding_hours"] = max(4, int(orig_holding * (1.0 - 0.40 * pressure_factor)))
-            
+
             orig_trail = float(decision.get("trail_mult", 1.2))
             decision["trail_mult"] = max(0.5, orig_trail * (1.0 - 0.25 * pressure_factor))
-            
+
             orig_tp = float(decision.get("tp_mult", 1.8))
             decision["tp_mult"] = max(0.8, orig_tp * (1.0 - 0.15 * pressure_factor))
-            
+
             decision["reason"] = f"{decision.get('reason','')}|槽位压力:{active_est}/{max_active}({pressure_factor:.2f})"
-            
+
         if (not self.has_position) or (pressure_factor == 0):
             return False
         now = time.time()
         cooldown = max(10, int(self.config.get("slot_pressure_cooldown_sec", 120)))
         if now - self.last_slot_relief_ts < cooldown:
             return False
-            
+
         # 波动率加权的到手即走
         atr_ratio = atr / price if price > 0 else 0.0
         volatility_multiplier = 1.0
@@ -4358,10 +4520,10 @@ class UltimateGridStrategy(threading.Thread):
             volatility_multiplier = 1.5  # 放宽容忍度，让利润奔跑
         elif atr_ratio > 0.03: # 极高波动率
             volatility_multiplier = 2.0
-            
+
         take_roe = float(self.config.get("slot_pressure_take_roe", 0.0045)) * volatility_multiplier
         retrace_roe = float(self.config.get("slot_pressure_retrace_roe", 0.0025)) * volatility_multiplier
-        
+
         max_hold_sec = max(600, int(self.config.get("slot_pressure_max_hold_sec", 5400)))
         min_roe_for_time = float(self.config.get("slot_pressure_time_relief_min_roe", -0.0015))
         roe = float(self.position_roe)
@@ -4408,17 +4570,17 @@ class UltimateGridStrategy(threading.Thread):
                 if len(self.causal_treated_bank) >= 8:
                     fv = np.array(s.get("fv"), dtype=float)
                     k = min(8, len(self.causal_treated_bank))
-                    
+
                     bank_fvs = np.array([x[0] for x in self.causal_treated_bank])
                     bank_outs = np.array([x[1] for x in self.causal_treated_bank])
                     diffs = bank_fvs - fv
                     dists = np.sum(diffs ** 2, axis=1)
-                    
+
                     if k < len(dists):
                         idx = np.argpartition(dists, k)[:k]
                     else:
                         idx = np.arange(len(dists))
-                        
+
                     near_outs = bank_outs[idx]
                     opp = float(np.mean(near_outs)) if len(near_outs) > 0 else 0.0
                     outcome = -max(0.0, opp) * ocw
@@ -4444,7 +4606,7 @@ class UltimateGridStrategy(threading.Thread):
                 self.log_msg("流动性过低，策略停止", "WARNING")
                 # 不再直接退出，防止频繁重启，只是保持不活跃状态
                 time.sleep(30)
-                
+
         if not self.init_settings():
             # 只有当停止原因是明确的鉴权失败时，才真正退出策略
             if getattr(self, "stop_reason", "") == "auth_invalid":
@@ -4499,7 +4661,7 @@ class UltimateGridStrategy(threading.Thread):
             self.correlation.update()
         except Exception as e:
             self.log_msg(f"相关性矩阵初始更新失败: {e}", "WARNING")
-            
+
         try:
             self.reconcile_orders(startup=True)
         except Exception as e:
@@ -4568,10 +4730,10 @@ class UltimateGridStrategy(threading.Thread):
                 self._flush_causal_labels(price)
                 self.price_history.append(price)
                 self.process_stop_hunt_events(price)
-                
+
                 # 记录高频价格，用于 Shockwave 计算
                 self.fast_prices_for_shockwave.append((time.time(), price))
-                
+
                 # 计算大盘斜率冷却 (Shockwave Cooldown)
                 # 如果在最近 60 秒内，价格发生了极端断崖式暴跌或暴涨（超过 ATR 的 2 倍），则全局挂起所有新开仓
                 if len(self.fast_prices_for_shockwave) >= 10 and self.cached_atr > 0:
@@ -4596,17 +4758,17 @@ class UltimateGridStrategy(threading.Thread):
                     self.reconcile_orders()
                     time.sleep(2)
                     continue
-                
+
                 # 如果处于物理网格模式，优先检查网格状态并自动补网
                 if self.grid_mode_active and self.grid_manager.is_running:
                     self.grid_manager.check_and_replenish()
-                    
+
                     # 检查是否破网 (比如价格偏离中心价超过一定幅度)
                     if abs(price - self.grid_manager.center_price) / max(1e-8, self.grid_manager.center_price) > (self.grid_manager.grid_step * self.grid_manager.grid_levels * 1.5):
                         self.log_msg("价格偏离网格中心过大，触发破网撤单保护", "WARNING")
                         self.grid_manager.cancel_all_grids()
                         self.grid_mode_active = False
-                        
+
                 # 成本屏障：获取最新的配置费率，用于决策引擎
                 maker_fee = float(self.config.get("maker_fee", 0.0002))
                 taker_fee = float(self.config.get("taker_fee", 0.0005))
@@ -4667,7 +4829,7 @@ class UltimateGridStrategy(threading.Thread):
                 sentiment_value = self.sentiment.update()
                 funding_pred = self.funding_predictor.predict_next()
                 corr_penalty = self.get_correlation_penalty()
-                
+
                 # 计算针对当前标的与活跃持仓的惩罚墙
                 active_symbols_snapshot = []
                 if hasattr(self.scheduler, "get_active_symbols_snapshot"):
@@ -4688,7 +4850,7 @@ class UltimateGridStrategy(threading.Thread):
                             self.log_msg("【安全清理】大盘震波来袭，紧急撤销物理网格挂单", "WARNING")
                             self.grid_manager.cancel_all_grids()
                             self.grid_mode_active = False
-                            
+
                 if global_shockwave_active:
                     self.check_filled_orders(0.5, self.config.get('base_grid_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
                     self.reconcile_orders()
@@ -4706,7 +4868,7 @@ class UltimateGridStrategy(threading.Thread):
                 }
                 buy_prob = max(0.0, min(1.0, self.ensemble.decide(context)))
                 self.last_decision_context = context  # 保存上下文，供贝叶斯更新使用
-                
+
                 crowding_score = self.compute_crowding_score(buy_prob, order_imbalance, volume_ratio, state)
                 if self.suspicious_pause_until > time.time():
                     remain = int(self.suspicious_pause_until - time.time())
@@ -4753,7 +4915,7 @@ class UltimateGridStrategy(threading.Thread):
                     metrics["propensity"] = 0.5
                 decision = self.causal_engine.evaluate(state, buy_prob, metrics, self.current_style)
                 decision, recovery_info = self._apply_recovery_to_decision(decision)
-                
+
                 # 动态收网检查（接入因果引擎实时判定）
                 if self.grid_mode_active and not decision.get("use_physical_grid", False):
                     self.log_msg("因果引擎判定当前环境不再适合网格，主动收网", "WARNING")
@@ -4825,7 +4987,7 @@ class UltimateGridStrategy(threading.Thread):
                 )
                 # 增加 _order_token 以便防爆仓拦截时可以释放锁
                 decision["_order_token"] = order_token
-                
+
                 if order_token:
                     # 检查是否应该铺设物理网格
                     if decision.get("use_physical_grid", False) and not self.grid_mode_active and not self.has_position:
@@ -4833,7 +4995,7 @@ class UltimateGridStrategy(threading.Thread):
                         margin_total = float(self.config['margin_usdt'])
                         used_margin = self._estimate_used_margin_total(refresh_sec=8.0)
                         available_margin = max(0.0, margin_total - used_margin)
-                        
+
                         symbols_cfg = self.config.get('symbols', [])
                         symbols_count = len(symbols_cfg) if isinstance(symbols_cfg, (list, tuple)) else 0
                         active_slots = int(self.config.get('max_active_symbols', DEFAULT_CONFIG.get('max_active_symbols', 6)))
@@ -4841,27 +5003,27 @@ class UltimateGridStrategy(threading.Thread):
                         active_est, _, _ = self._estimate_active_occupancy()
                         slots_left = max(1, active_slots - active_est)
                         margin_per_symbol = available_margin / slots_left
-                        
+
                         # 留出余量，防止网格挂单把保证金打满
                         grid_margin = margin_per_symbol * 0.8
-                        
+
                         # 计算单格数量
                         grid_levels = int(self.grid_manager.grid_levels)
                         safe_price = max(1e-8, price)
                         market = self.exchange.market(self.symbol)
-                        
+
                         # 修复缺陷 4：物理网格计算考虑合约面值
                         contract_size = float(market.get('contractSize', market.get('info', {}).get('quanto_multiplier', 1)) or 1)
                         is_contract = market.get('contract', False)
-                        
+
                         leverage_for_grid = self._get_confirmed_leverage_for_sizing(dynamic_leverage)
                         if is_contract and contract_size > 0:
                             raw_qty = (grid_margin * leverage_for_grid / (safe_price * contract_size)) / (grid_levels * 2)
                         else:
                             raw_qty = (grid_margin * leverage_for_grid / safe_price) / (grid_levels * 2)
-                            
+
                         min_amount = float(market.get('limits', {}).get('amount', {}).get('min') or 0.0)
-                        
+
                         # 精度对齐
                         precision_amount = market.get('precision', {}).get('amount')
                         if precision_amount is not None:
@@ -4884,7 +5046,7 @@ class UltimateGridStrategy(threading.Thread):
                                 qty_per_grid = raw_qty
                         else:
                             qty_per_grid = raw_qty
-                            
+
                         if qty_per_grid >= min_amount and qty_per_grid > 0:
                             success = self.grid_manager.setup_grid(price, optimal_range, grid_levels, qty_per_grid, maker_fee)
                             if success:
@@ -4984,7 +5146,7 @@ class UltimateGridStrategy(threading.Thread):
                     gc.collect()
                     self.last_gc_ts = time.time()
                     self.log_msg("【系统维护】内存垃圾回收完成", "INFO")
-                    
+
                 self._runtime_adapt()
 
                 try:
@@ -5046,6 +5208,10 @@ class UltimateGridStrategy(threading.Thread):
             reason = str(decision.get("reason", ""))
             if bool(self.config.get("execution_degraded", False)):
                 self.log_msg("执行容灾开启中，暂缓新开仓", "WARNING")
+                return False
+            # ====== 日亏损熔断检查 ======
+            if hasattr(self, 'safety_monitor') and self.safety_monitor and self.safety_monitor.is_daily_fused():
+                self.log_msg("🚨 日亏损熔断中，禁止新开仓", "WARNING")
                 return False
             if self.has_position and (not bool(self.config.get("allow_scale_in", False))):
                 now_ts = time.time()
@@ -5143,7 +5309,7 @@ class UltimateGridStrategy(threading.Thread):
             if self.has_position and active_est <= 0:
                 active_est = 1
             slots_left = max(1, max_active - max(0, active_est))
-            
+
             # === 这里修复单币种开仓量的问题 ===
             # 如果当前是空仓，或者我们允许加仓，那么我们只能使用 margin_per_symbol (比如25U)
             # 而不是把剩余的 available_margin 全部用掉
@@ -5151,13 +5317,13 @@ class UltimateGridStrategy(threading.Thread):
             if margin_per_symbol <= 0:
                 self.log_msg(f"可用保证金不足: total={margin_total:.2f} used={used_margin:.2f}", "WARNING")
                 return False
-                
+
             safe_price = max(1e-8, price)
             # 计算开仓数量：注意这里的合约价值。
             # 如果是币本位或以张数计价的 U本位，我们需要将面值纳入计算，否则可能导致算出 1.0 等整数。
             contract_size = float(market.get('contractSize', market.get('info', {}).get('quanto_multiplier', 1)) or 1)
-            
-            # 针对 Gate.io 等交易所，如果 API 要求传入的是“张数”（contracts），则需要除以 contract_size
+
+            # 针对 Gate.io 等交易所，如果 API 要求传入的是"张数"（contracts），则需要除以 contract_size
             # 这里的判断逻辑优化：只要是衍生品合约，且 contract_size > 0 且不等于 1，就默认除以它
             is_contract = market.get('contract', False)
             effective_margin_cap = min(margin_per_symbol, max_margin_per_symbol)
@@ -5178,7 +5344,7 @@ class UltimateGridStrategy(threading.Thread):
                 total_contracts = (effective_margin_cap * leverage_for_sizing) / (safe_price * contract_size)
             else:
                 total_contracts = (effective_margin_cap * leverage_for_sizing) / safe_price
-            
+
             # 处理精度问题，防止下单量太大或不符合交易所步长
             precision_amount = market.get('precision', {}).get('amount')
             if precision_amount is not None:
@@ -5193,7 +5359,7 @@ class UltimateGridStrategy(threading.Thread):
                         step = 1.0
                     else:
                         step = 1.0
-                    
+
                     # 使用 step size 进行安全向下取整
                     qty = math.floor(total_contracts / step) * step
                     # 如果 step 是整数，则把 qty 转成 int，防止 160.0 被某些严格的交易所拒绝
@@ -5207,25 +5373,25 @@ class UltimateGridStrategy(threading.Thread):
                     qty = total_contracts
             else:
                 qty = total_contracts
-                
+
             if qty < min_amount:
                 qty = min_amount
-                
+
             # 终极安全断言：硬性限制名义价值绝对不能超过分配额度的杠杆倍数
             # 如果计算出的 qty 因为 min_amount 或各种意外导致其价值过大，直接拒绝下单
             notional_value = qty * safe_price * (contract_size if is_contract and contract_size > 0 else 1.0)
-            
+
             # 将已成交持仓保证金 + 挂单冻结保证金 进行合并计算
             total_exposure = self.position_margin + pending_notional
-            
+
             # 这里修复一个隐患：如果当前是加仓，且剩余额度不足以满足 min_amount 的强制要求，也必须拒绝
             remaining_margin = max(0.0, max_margin_per_symbol - total_exposure)
-            
+
             # 增加一个物理网格铺设时的例外：如果是铺设物理网格，不需要受限于单次加仓的剩余额度，
             # 因为物理网格会自己拆分金额，且我们相信上面的逻辑已经拦截了。
             if reason != "grid_setup":
                 max_allowed_notional = remaining_margin * leverage_for_sizing * 1.05 # 允许5%的误差容限
-                
+
                 if notional_value > max_allowed_notional:
                     self.log_msg(f"【硬性防爆仓拦截】尝试开仓的名义价值({notional_value:.2f}U)超过了当前剩余额度允许上限({max_allowed_notional:.2f}U)，取消下单！(当前总敞口:{total_exposure:.2f}U)", "ERROR")
                     if self.scheduler:
@@ -5241,7 +5407,7 @@ class UltimateGridStrategy(threading.Thread):
                     if self.scheduler:
                         self.scheduler.cancel_token(decision.get("_order_token", ""))
                     return False
-                
+
             try:
                 reverse_rate = max(0.0, min(0.02, float(self.config.get("reverse_probe_rate", 0.005))))
             except Exception:
@@ -5411,6 +5577,11 @@ class UltimateGridStrategy(threading.Thread):
                 self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
             self.position_open_context = getattr(self, "last_decision_context", None)
             self.has_position = True # 立即标记，防止20秒刷新窗口期内重复穿透
+            # ML学习：保存开仓时的价格快照
+            try:
+                self._entry_prices_snapshot = list(self.price_history) if hasattr(self, 'price_history') else None
+            except Exception:
+                self._entry_prices_snapshot = None
             return True
         except Exception as e:
             self.log_msg(f"下单失败: {e}", "ERROR")
@@ -5464,13 +5635,13 @@ class UltimateGridStrategy(threading.Thread):
                 self.position_contracts = contracts
                 self.position_entry_price = float(pos.get('entryPrice', pos.get('entry_price', 0)) or 0)
                 self.position_mark_price = float(pos.get('markPrice', pos.get('mark_price', 0)) or 0)
-                
+
                 # 兼容 Gate.io 未实现盈亏可能存在于 info 里的情况
                 upnl = pos.get('unrealizedPnl', pos.get('unrealized_pnl'))
                 if upnl is None:
                     upnl = pos.get('info', {}).get('unrealised_pnl', 0)
                 self.position_unrealized_pnl = float(upnl or 0)
-                
+
                 # ==== 提取真实杠杆倍数 ====
                 real_leverage = float(pos.get('leverage', self.config.get('leverage', 3)) or self.config.get('leverage', 3))
                 if real_leverage <= 0:
@@ -5489,7 +5660,7 @@ class UltimateGridStrategy(threading.Thread):
                         direction = 1 if self.position_contracts > 0 else -1
                     roe = (self.position_mark_price - self.position_entry_price) / self.position_entry_price * max(1e-8, real_leverage) * direction * 100
                 self.position_roe = roe
-                
+
                 # ==== 修复 Gate.io 保证金显示为 0 的问题 ====
                 margin = float(pos.get('initialMargin', pos.get('margin', pos.get('collateral', 0))) or 0)
                 if margin == 0:
@@ -5501,21 +5672,21 @@ class UltimateGridStrategy(threading.Thread):
                     notional = abs(self.position_contracts) * contract_size * self.position_mark_price
                     margin = notional / max(1e-8, real_leverage)
                 self.position_margin = margin
-                
+
                 # 尝试获取强平价，不同交易所字段不同
                 liq_price = pos.get('liquidationPrice', pos.get('liquidation_price'))
                 if liq_price is None:
                     info = pos.get('info', {})
                     liq_price = info.get('liquidationPrice', info.get('liqPrice', info.get('estimatedLiquidationPrice', 0.0)))
                 self.position_liquidation_price = float(liq_price) if liq_price else 0.0
-                
+
                 # 确保止损模块同步了该持仓（防止因为本地 JSON 丢失导致永远无法平仓）
                 self.stop_loss._load_state()
                 if self.symbol not in self.stop_loss.positions or not self.stop_loss.positions[self.symbol]:
                     dummy_atr = self.position_entry_price * 0.005
                     self.stop_loss.add_position(self.symbol, self.position_entry_price, dummy_atr, 'buy' if direction > 0 else 'sell', 1.8)
                     self.log_msg(f"从交易所恢复丢失的止损状态记录", "WARNING")
-                    
+
             else:
                 self.position_contracts = 0.0
                 self.position_entry_price = 0.0
@@ -5552,15 +5723,15 @@ class UltimateGridStrategy(threading.Thread):
                     # 兼容 Gate.io 返回 size 的情况
                     if contracts == 0 and p.get('info', {}).get('size'):
                         contracts = abs(float(p.get('info', {}).get('size')))
-                        
+
                     if contracts <= 0:
                         continue
-                        
+
                     # 统一的三层兜底逻辑
                     m = float(p.get('initialMargin', p.get('margin', p.get('collateral', 0))) or 0)
                     if m == 0:
                         m = float(p.get('info', {}).get('margin', 0))
-                        
+
                     if m > 0:
                         used += m
                     else:
@@ -5568,7 +5739,7 @@ class UltimateGridStrategy(threading.Thread):
                         real_leverage = float(p.get('leverage', self.config.get('leverage', 4)) or self.config.get('leverage', 4))
                         if real_leverage <= 0:
                             real_leverage = float(p.get('info', {}).get('leverage', self.config.get('leverage', 4)) or self.config.get('leverage', 4))
-                            
+
                         # 如果没有明文保证金，用名义价值除以当前杠杆作为预估
                         if ep > 0 and real_leverage > 0:
                             contract_size = float(p.get('contractSize', p.get('info', {}).get('quanto_multiplier', 1)) or 1)
@@ -5669,7 +5840,7 @@ class UltimateGridStrategy(threading.Thread):
                     self.log_msg(f"订单已成交: {side} {amount}")
                     if self.scheduler:
                         self.scheduler.record_fill(self.symbol)
-                    
+
                     # === 补充原先缺失的成交后处理逻辑 ===
                     created_ts = float(order.get("_created_ts", 0) or 0)
                     if created_ts > 0:
@@ -5792,7 +5963,7 @@ class UltimateGridStrategy(threading.Thread):
                     self.log_msg(f"启动核对已修正挂单状态({removed})", "WARNING")
                 else:
                     self.log_msg(f"挂单核对已修正状态({removed})", "INFO")
-            
+
             if len(open_orders) > max(3, int(self.config.get("max_stale_orders", 5))):
                 for o in open_orders:
                     if time.time() - (o.get('timestamp', 0) / 1000.0) > max(300, int(self.config.get("stale_order_cancel_sec", 600))):
@@ -5842,7 +6013,7 @@ class UltimateGridStrategy(threading.Thread):
                             closed = True
                         except Exception as e:
                             self.log_msg(f"资金费率平仓失败: {e}", "ERROR")
-                        
+
                         if closed:
                             ep = float(pos.get('entryPrice', pos.get('entry_price', 0)) or 0)
                             self.stop_loss.remove_position(self.symbol, entry_price=ep, side='buy' if side_pos == 'long' else 'sell')
@@ -5927,7 +6098,7 @@ class UltimateGridStrategy(threading.Thread):
                 except Exception as e:
                     self.log_msg(f"单持仓平仓失败: {e}", "ERROR")
                     all_closed = False
-            
+
             if all_closed:
                 self.has_position = False
             return all_closed
@@ -6129,7 +6300,16 @@ class UltimateGridStrategy(threading.Thread):
         }
         outcome = float(mapping.get(action, -0.1))
         self.performance_returns.append(outcome)
-        
+
+        # ML在线学习：用平仓结果反馈给ML预测器
+        try:
+            if hasattr(self, 'ml_predictor') and hasattr(self.ml_predictor, 'learn'):
+                actual_ret = 1.0 if outcome > 0 else -1.0
+                if hasattr(self, '_entry_prices_snapshot') and self._entry_prices_snapshot is not None:
+                    self.ml_predictor.learn(self._entry_prices_snapshot, actual_ret)
+        except Exception:
+            pass  # silent fallback
+
         # MAB入场模式反馈：根据平仓结果更新入场引擎
         if hasattr(self, 'adaptive_entry') and hasattr(self, 'last_entry_mode') and self.last_entry_mode >= 0:
             mab_reward = outcome * 0.5  # 缩放到合理范围
@@ -6141,11 +6321,11 @@ class UltimateGridStrategy(threading.Thread):
                 elif hold_hours > 12 and outcome < 0:
                     mab_reward -= 0.1  # 长时间持仓亏损扣分
             self.adaptive_entry.record_outcome(self.last_entry_mode, mab_reward)
-        
+
         # 贝叶斯策略权重更新：根据平仓结果的胜负，动态调整各个子策略的权重
         # outcome > 0 视为胜利 (1.0), outcome < 0 视为失败 (-1.0)
         actual_outcome = 1.0 if outcome > 0 else -1.0
-        
+
         # 为了让权重更新平滑且合理，我们将最新的上下文状态传给 ensemble
         # 修复缺陷 10：传入建仓时的真实 context（如果存在），否则回退到最近的 context
         try:
@@ -6155,7 +6335,7 @@ class UltimateGridStrategy(threading.Thread):
                     self.ensemble.update_weights(ctx_to_use, actual_outcome)
         except Exception as e:
             self.log_msg(f"贝叶斯权重更新异常: {e}", "WARNING")
-            
+
         try:
             alpha = max(0.01, min(0.5, float(self.config.get("causal_feedback_alpha", 0.15))))
         except Exception:
@@ -6250,7 +6430,7 @@ class BotGUI:
         self.root = root
         self.root.title("PhoenixQ V1.0 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
-        # PhoenixQ 主题 — 暖金+深灰，凤凰涅槃感
+        # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
             "bg": "#1a1a2e",       # 深靛蓝底色
             "panel": "#16213e",    # 深海蓝面板
@@ -6529,13 +6709,13 @@ class BotGUI:
             self.config['strategy_style'] = style_choice
         else:
             self.config['strategy_style'] = "自动"
-            
+
         op_mode_choice = self.cmb_op_mode.get().strip()
         if op_mode_choice in ["自动", "生存优先", "效率优先"]:
             self.config['operation_mode'] = op_mode_choice
         else:
             self.config['operation_mode'] = "自动"
-            
+
         self.config['evolution_enabled'] = bool(self.var_evolution.get())
         # 新增：智能引擎开关
         if hasattr(self, 'var_smart_symbol_enabled'):
@@ -7434,7 +7614,7 @@ class BotGUI:
                     return
                 self.log(f"测试 API 连接时遇到网络错误: {auth_e}，将继续尝试", "WARNING")
             self.log("Gate.io API 连接成功", "INFO")
-                
+
             self.refresh_balance(exchange)
         except Exception as e:
             self.log(f"API 连接失败: {e}", "ERROR")
@@ -7505,6 +7685,7 @@ class BotGUI:
                 continue
             try:
                 s = UltimateGridStrategy(exchange, sym, self.config, self.monitor, self.log, self.scheduler)
+                s.safety_monitor = self.safety_monitor  # 传递日亏损熔断引用
                 with self.strategies_lock:
                     self.strategies[sym] = s
                 s.start()
@@ -7532,6 +7713,11 @@ class BotGUI:
             stop_event=self.stop_event
         )
         self.safety_monitor.start()
+
+        # 补传safety_monitor引用给所有策略线程
+        with self.strategies_lock:
+            for sym, s in self.strategies.items():
+                s.safety_monitor = self.safety_monitor
 
         # 等待停止信号
         while self.running and not self.stop_event.is_set():
@@ -7639,18 +7825,18 @@ class BotGUI:
                         key = _norm_symbol(symbol)
                         entry = float(p.get('entryPrice', p.get('entry_price', 0)) or 0)
                         mark = float(p.get('markPrice', p.get('mark_price', 0)) or 0)
-                        
+
                         # 兼容 Gate.io 未实现盈亏可能存在于 info 里的情况
                         upnl = p.get('unrealizedPnl', p.get('unrealized_pnl'))
                         if upnl is None:
                             upnl = p.get('info', {}).get('unrealised_pnl', 0)
                         pnl = float(upnl or 0)
-                        
+
                         # ==== 提取真实杠杆倍数 ====
                         real_leverage = float(p.get('leverage', self.config.get('leverage', 3)) or self.config.get('leverage', 3))
                         if real_leverage <= 0:
                             real_leverage = float(p.get('info', {}).get('leverage', self.config.get('leverage', 3)) or self.config.get('leverage', 3))
-                            
+
                         # 获取方向
                         side = p.get('side', 'long').lower()
                         if 'short' in side or 'sell' in side:
@@ -7662,7 +7848,7 @@ class BotGUI:
                         roe = float(p.get('percentage', p.get('roe', 0)) or 0)
                         if roe == 0 and entry > 0:
                             roe = (mark - entry) / entry * max(1e-8, real_leverage) * direction * 100
-                            
+
                         # 如果有了未实现盈亏，但还是算不出保证金（比如强行兜底），可以通过 pnl 反推，但这里用名义价值除以杠杆更稳
                         # ==== 修复 Gate.io 保证金显示为 0 的问题 ====
                         margin = float(p.get('initialMargin', p.get('margin', p.get('collateral', 0))) or 0)
@@ -7672,11 +7858,11 @@ class BotGUI:
                             contract_size = float(p.get('contractSize', p.get('info', {}).get('quanto_multiplier', 1)) or 1)
                             notional = abs(contracts) * contract_size * mark
                             margin = notional / max(1e-8, real_leverage)
-                            
+
                         # 二次校准：如果自己算的 roe 和真实盈亏方向相反，或者差得离谱，以真实 pnl 和 margin 反推 roe
                         if margin > 0 and pnl != 0 and (roe == 0 or np.sign(roe) != np.sign(pnl)):
                             roe = (pnl / margin) * 100
-                            
+
                         mode = "未托管"
                         old = rows_map.get(key)
                         if old is not None:
