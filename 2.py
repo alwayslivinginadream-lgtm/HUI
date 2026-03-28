@@ -5680,7 +5680,7 @@ class UltimateGridStrategy(threading.Thread):
                         else:
                             pnl_quote = (ep - actual_exec) * abs(contracts)
                         contract_size_pos = float(pos.get('contractSize', pos.get('info', {}).get('quanto_multiplier', 1)) or 1)
-                        pnl_quote = pnl_quote * max(1.0, contract_size_pos if contract_size_pos > 0 else 1.0)
+                        pnl_quote = pnl_quote * (contract_size_pos if contract_size_pos > 0 else 1.0)
                         fee_rate = float(self.config.get("taker_fee", 0.0005))
                         pnl_quote -= abs(notional_entry) * fee_rate
                         self._record_realized_pnl(float(pnl_quote))
