@@ -35,8 +35,7 @@ DEFAULT_CONFIG = {
     "margin_usdt": 100.0,                # 总仓位额度（所有选中币种共享）
     "leverage": 4,                       # 基础杠杆
     "margin_mode": "isolated",            # 逐仓
-    "grid_count": 10,                     # 网格数量
-    "base_grid_range": 0.02,              # 基础网格区间 ±2%
+    "base_price_range": 0.02,              # 基础价格区间 ±2%（用于止损止盈计算）
     "adx_threshold": 25,                  # ADX趋势阈值
     "min_24h_volume": 1000000,             # 最小成交量
     "funding_rate_threshold": 0.00025,     # 资金费率阈值
@@ -202,8 +201,6 @@ DEFAULT_CONFIG = {
     "loop_sleep_max_sec": 6.0,
     "tunable_params": {
         "leverage": {"min": 1, "max": 10},
-        "grid_count": {"min": 6, "max": 24},
-        "base_grid_range": {"min": 0.005, "max": 0.08},
         "risk_var_weight": {"min": 0.2, "max": 1.2},
         "risk_funding_weight": {"min": 0.05, "max": 0.8},
         "risk_corr_weight": {"min": 0.05, "max": 0.8},
@@ -269,7 +266,7 @@ DEFAULT_CONFIG = {
     "stale_order_cancel_sec": 600,
 }
 
-CONFIG_FILE = "grid_ultimate_config.json"
+CONFIG_FILE = "phoenixq_config.json"
 API_SEMAPHORE = threading.Semaphore(5)      # API并发限制
 API_RATE_LIMIT_LOCK = threading.Lock()
 API_RATE_LIMIT_UNTIL = 0.0
@@ -1112,7 +1109,7 @@ class AdaptiveEntryEngine:
         self.history.append((mode, reward, time.time()))
         self._safe_log(f"更新模式 {self.MODE_NAMES[mode]}: reward={reward:.3f} avg={new_avg:.3f} count={self.counts[mode]}")
 
-    def compute_entry_params(self, mode, side, price, atr, bb_upper, bb_lower, grid_range):
+    def compute_entry_params(self, mode, side, price, atr, bb_upper, bb_lower, price_range):
         """
         根据选定的入场模式计算具体下单参数
         返回 dict: {order_type, price, split_parts, timeout_sec, confirm_bars, reason}
@@ -1150,9 +1147,9 @@ class AdaptiveEntryEngine:
         elif mode == self.MODE_SR_LIMIT:
             # 在布林带边界挂限价单
             if side == "buy":
-                entry_price = bb_lower if bb_lower > 0 else price * (1 - grid_range)
+                entry_price = bb_lower if bb_lower > 0 else price * (1 - price_range)
             else:
-                entry_price = bb_upper if bb_upper > 0 else price * (1 + grid_range)
+                entry_price = bb_upper if bb_upper > 0 else price * (1 + price_range)
             return {
                 "order_type": "limit",
                 "price": max(1e-8, entry_price),
@@ -1764,21 +1761,6 @@ class FundingRatePredictor:
             return 0
 
 # ==================== 第9层：网格参数动态优化 ====================
-class GridOptimizer:
-    def __init__(self, base_range, atr_period=14):
-        self.base_range = base_range
-        self.atr_period = atr_period
-        self.optimal_range = base_range
-
-    def update(self, atr, price, volume_ratio):
-        if price <= 0:
-            return self.optimal_range
-        vol_adjust = (atr / price) / 0.02
-        volume_adjust = math.log(max(1, volume_ratio)) / 2
-        self.optimal_range = self.base_range * (1 + vol_adjust * 0.5) * (1 + volume_adjust * 0.3)
-        self.optimal_range = max(0.005, min(0.1, self.optimal_range))
-        return self.optimal_range
-
 # ==================== 第10层：多策略融合 ====================
 class StrategyEnsemble:
     def __init__(self):
@@ -2257,20 +2239,6 @@ class CausalDecisionEngine:
         if expected_profit_margin < total_cost_barrier * 1.2:
             cost_block_reason = f"预期利润({expected_profit_margin*100:.2f}%)不足以覆盖执行成本({total_cost_barrier*100:.2f}%)"
 
-        # 物理网格模式判断
-        use_physical_grid = False
-        op_mode = str(self.config.get("operation_mode", "自动"))
-        if op_mode == "生存优先":
-            use_physical_grid = False # 生存优先绝对不开网格
-        elif op_mode == "效率优先":
-            # 效率优先：只要不是极端的单边趋势，且风险不过高，就允许开网格
-            if state not in [MarketState.EXTREME_UPTREND, MarketState.EXTREME_DOWNTREND] and risk_penalty < 0.7:
-                use_physical_grid = True
-        else: # "自动"
-            # 自动模式：仅在明确的震荡市且因果不确定性低时开网格
-            if state == MarketState.RANGE and causal_uncertainty < 0.6 and (0.35 < buy_prob < 0.65) and risk_penalty < 0.6:
-                use_physical_grid = True
-
         decision = {
             "style": style,
             "opportunity_score": opportunity_score,
@@ -2284,7 +2252,6 @@ class CausalDecisionEngine:
             "max_holding_hours": dynamic_max_holding,
             "side": None,
             "entry_allowed": False,
-            "use_physical_grid": use_physical_grid,
             "reason": "等待机会",
             "execution": pre_execution,
             "details": {
@@ -2730,7 +2697,7 @@ class EvolutionEngine(threading.Thread):
 
     def _survive_extreme_test(self, params):
         lev = self._safe_float(params.get("leverage", 3), 3)
-        grid_range = self._safe_float(params.get("base_grid_range", 0.02), 0.02)
+        price_range = self._safe_float(params.get("base_price_range", 0.02), 0.02)
         sl_mult = self._safe_float(params.get("sl_mult", 1.7), 1.7)
         tp_mult = self._safe_float(params.get("tp_mult", 1.8), 1.8)
         trail_mult = self._safe_float(params.get("trail_mult", 1.2), 1.2)
@@ -2745,11 +2712,11 @@ class EvolutionEngine(threading.Thread):
             peak = 1.0
             for r in path:
                 adjusted = r * lev * max(0.5, min(2.0, trail_mult / max(0.8, sl_mult)))
-                adjusted *= max(0.6, min(1.6, grid_range / 0.02))
+                adjusted *= max(0.6, min(1.6, price_range / 0.02))
                 equity *= max(0.1, 1 + adjusted)
                 peak = max(peak, equity)
             dd = (peak - equity) / max(peak, 1e-8)
-            recovery = max(0.0, min(0.4, tp_mult * grid_range * 4))
+            recovery = max(0.0, min(0.4, tp_mult * price_range * 4))
             if dd - recovery > max_dd_limit:
                 return False
         return True
@@ -2886,7 +2853,7 @@ class EvolutionEngine(threading.Thread):
         sl_mult = max(0.8, self._safe_float(decision.get("sl_mult", params.get("sl_mult", 1.7)), 1.7))
         tp_mult = max(0.8, self._safe_float(decision.get("tp_mult", params.get("tp_mult", 1.8)), 1.8))
         trail_mult = max(0.6, self._safe_float(decision.get("trail_mult", params.get("trail_mult", 1.2)), 1.2))
-        grid_range = max(0.005, self._safe_float(params.get("base_grid_range", 0.02), 0.02))
+        price_range = max(0.005, self._safe_float(params.get("base_price_range", 0.02), 0.02))
         effective_leverage = max(1.0, min(18.0, leverage * max(0.5, lev_scale)))
         if probe["position"] == 0:
             if decision.get("entry_allowed", False) and decision.get("side") == "buy":
@@ -2903,10 +2870,10 @@ class EvolutionEngine(threading.Thread):
         drawdown = (probe["peak"] - probe["equity"]) / max(probe["peak"], 1e-8)
         move_ratio = (price - probe["entry_price"]) / max(probe["entry_price"], 1e-8)
         signed_move = move_ratio * direction
-        trigger_tp = signed_move >= grid_range * tp_mult
-        trigger_sl = signed_move <= -grid_range * sl_mult
+        trigger_tp = signed_move >= price_range * tp_mult
+        trigger_sl = signed_move <= -price_range * sl_mult
         trigger_risk = drawdown >= self._safe_float(params.get("max_portfolio_var", 0.035), 0.035) * 1.3
-        trigger_trail = abs(ret) >= grid_range * trail_mult * 0.35 and np.sign(ret) != np.sign(direction)
+        trigger_trail = abs(ret) >= price_range * trail_mult * 0.35 and np.sign(ret) != np.sign(direction)
         if trigger_tp or trigger_sl or trigger_risk or trigger_trail:
             trade_ret = (price - probe["entry_price"]) / max(probe["entry_price"], 1e-8) * direction * effective_leverage * 0.35
             fee_rate = max(0.0, min(0.01, self._safe_float(self.get_config().get("evolution_fee_rate", 0.001), 0.001)))
@@ -3342,244 +3309,6 @@ class SafetyMonitor(threading.Thread):
         self.running = False
 
 # ==================== 核心策略类（整合18层，增加全局调度） ====================
-class PhysicalGridManager:
-    def __init__(self, exchange, symbol, log_callback):
-        self.exchange = exchange
-        self.symbol = symbol
-        self.log_msg = log_callback
-        self.active_grids = {} # order_id: {"price": float, "side": "buy"/"sell", "qty": float, "type": "maker"/"taker"}
-        self.grid_step = 0.0
-        self.center_price = 0.0
-        self.grid_levels = 3 # 上下各铺几档
-        self.is_running = False
-        self.pending_replenish = [] # 新增：用于记录因为重试失败而暂时搁置的补网任务
-        self._load_state() # 初始化时尝试加载本地状态
-
-    def _save_state(self):
-        try:
-            db_path = f"grid_state_{self.symbol.replace('/', '_').replace(':', '_')}.json"
-            state = {
-                "is_running": self.is_running,
-                "center_price": self.center_price,
-                "grid_step": self.grid_step,
-                "grid_levels": self.grid_levels,
-                "active_grids": self.active_grids,
-                "pending_replenish": self.pending_replenish
-            }
-            with open(db_path, "w") as f:
-                json.dump(state, f)
-        except Exception as e:
-            self.log_msg(f"保存网格状态失败: {e}", "WARNING")
-
-    def _load_state(self):
-        try:
-            db_path = f"grid_state_{self.symbol.replace('/', '_').replace(':', '_')}.json"
-            if os.path.exists(db_path):
-                with open(db_path, "r") as f:
-                    state = json.load(f)
-                    self.center_price = float(state.get("center_price", 0.0))
-                    # 只有当 center_price 合理时，才恢复运行状态
-                    if self.center_price > 0:
-                        self.is_running = state.get("is_running", False)
-                        self.grid_step = float(state.get("grid_step", 0.0))
-                        self.grid_levels = int(state.get("grid_levels", 3))
-                        self.active_grids = state.get("active_grids", {})
-                        self.pending_replenish = state.get("pending_replenish", [])
-                        self.log_msg(f"成功恢复本地网格状态: 活跃订单数 {len(self.active_grids)}")
-                    else:
-                        self.log_msg("本地网格状态 center_price 异常，放弃恢复", "WARNING")
-        except Exception as e:
-            self.log_msg(f"读取网格状态失败: {e}", "WARNING")
-
-    def setup_grid(self, center_price, grid_step, grid_levels, qty_per_grid, maker_fee=0.0002):
-        # 成本屏障：网格的绝对底线是覆盖双边 Maker 成本
-        if grid_step < (maker_fee * 2) * 1.5:
-            self.log_msg(f"【物理网格】网格间距({grid_step*100:.2f}%)不足以覆盖双边手续费成本，拒绝铺网！", "WARNING")
-            return False
-
-        if self.is_running:
-            self.cancel_all_grids()
-
-        self.center_price = center_price
-        self.grid_step = grid_step
-        self.grid_levels = max(1, int(grid_levels))
-        self.is_running = True
-
-        self.log_msg(f"【物理网格】开始铺网: 中心={center_price:.4f}, 间距={grid_step*100:.2f}%, 档位=±{self.grid_levels}, 单格数量={qty_per_grid:.4f}")
-
-        # 铺设买单 (下网)
-        for i in range(1, self.grid_levels + 1):
-            buy_price = center_price * (1 - grid_step * i)
-            self._place_grid_order("buy", qty_per_grid, buy_price)
-
-        # 铺设卖单 (上网)
-        for i in range(1, self.grid_levels + 1):
-            sell_price = center_price * (1 + grid_step * i)
-            self._place_grid_order("sell", qty_per_grid, sell_price)
-
-        self._save_state()
-        return True
-
-    def _normalize_qty(self, qty):
-        try:
-            market = self.exchange.market(self.symbol)
-        except Exception:
-            return max(0.0, float(qty or 0))
-        try:
-            qty = float(qty or 0)
-        except Exception:
-            return 0.0
-        if qty <= 0:
-            return 0.0
-        min_amount = market.get('limits', {}).get('amount', {}).get('min')
-        try:
-            min_amount = float(min_amount) if min_amount is not None else 0.0
-        except Exception:
-            min_amount = 0.0
-        precision_amount = market.get('precision', {}).get('amount')
-        if precision_amount is not None:
-            try:
-                if isinstance(precision_amount, float) and precision_amount < 1.0:
-                    step = precision_amount
-                elif isinstance(precision_amount, int) and precision_amount >= 0:
-                    step = 10 ** -precision_amount
-                elif precision_amount == 1.0 or precision_amount == 1:
-                    step = 1.0
-                else:
-                    step = 1.0
-                qty = math.floor(qty / step) * step
-                if step >= 1.0:
-                    qty = int(qty)
-                else:
-                    decimals = len(str(step).rstrip('0').split('.')[-1])
-                    qty = round(qty, decimals)
-            except Exception:
-                pass  # silent fallback
-        if qty < min_amount or qty <= 0:
-            return 0.0
-        return float(qty)
-
-    def _place_grid_order(self, side, qty, price):
-        try:
-            qty = self._normalize_qty(qty)
-            if qty <= 0 or float(price) <= 0:
-                return None
-            # 使用 post_only 确保是 Maker 单，节省手续费
-            order = api_call(
-                self.exchange.create_order,
-                self.symbol, 'limit', side, qty, price,
-                {'hedged': True, 'postOnly': True}
-            )
-            if isinstance(order, dict) and order.get("id"):
-                self.active_grids[order["id"]] = {
-                    "price": float(price),
-                    "side": side,
-                    "qty": float(qty),
-                    "ts": time.time()
-                }
-                self.log_msg(f"【物理网格】挂单成功: {side} {qty:.4f} @ {price:.4f}")
-            return order
-        except Exception as e:
-            self.log_msg(f"【物理网格】挂单失败 {side} @ {price:.4f}: {e}", "WARNING")
-            return None
-
-    def cancel_all_grids(self):
-        self.is_running = False
-        if not self.active_grids:
-            return
-        self.log_msg(f"【物理网格】正在撤销所有网格挂单 ({len(self.active_grids)} 个)...")
-        for order_id in list(self.active_grids.keys()):
-            try:
-                api_call(self.exchange.cancel_order, order_id, self.symbol)
-            except Exception:
-                pass  # silent fallback
-        self.active_grids.clear()
-        self._save_state()
-        self.log_msg("【物理网格】所有网格挂单已撤销")
-
-    def check_and_replenish(self):
-        if not self.is_running or not self.active_grids:
-            return
-
-        try:
-            # 获取所有挂单状态
-            open_orders = api_call(self.exchange.fetch_open_orders, self.symbol)
-            if not isinstance(open_orders, list):
-                self.log_msg("【物理网格】获取挂单列表失败或返回异常格式，跳过本轮补网检查", "WARNING")
-                return
-
-            open_order_ids = [str(o['id']) for o in open_orders]
-
-            filled_orders = []
-            for oid, info in list(self.active_grids.items()):
-                if oid not in open_order_ids:
-                    # 额外保险：通过 fetch_order 确认真的是成交了而不是网络抖动导致的列表丢失
-                    # 如果开启高频补网，这里可能触发 API 限频，为了防弹，我们只对丢失的单子做精准核实
-                    try:
-                        single_order = api_call(self.exchange.fetch_order, oid, self.symbol)
-                        if single_order and single_order.get("status") in ["closed", "canceled", "rejected"]:
-                            filled_orders.append((oid, info))
-                            del self.active_grids[oid]
-                        elif single_order and single_order.get("status") == "open":
-                            # 居然还在，说明 fetch_open_orders 漏报了
-                            continue
-                        else:
-                            # 查不到或状态不明，为了安全先当作已结束处理，但不一定立刻反向补单，这里保守处理
-                            filled_orders.append((oid, info))
-                            del self.active_grids[oid]
-                    except Exception as single_e:
-                        msg = str(single_e).lower()
-                        # 重点：如果是网络断开、超时或API限频，绝对不能当作成交，必须原样保留在 active_grids 中
-                        if any(k in msg for k in ["timeout", "network", "rate limit", "429", "connection", "502", "503", "504"]):
-                            self.log_msg(f"【物理网格防弹】网络/API异常，挂单状态存疑，拒绝反向补单以防死循环: {single_e}", "WARNING")
-                            continue
-                        else:
-                            self.log_msg(f"【物理网格】无法核实消失的挂单 {oid}: {single_e}，暂时挂起", "WARNING")
-                            continue
-
-            # 自动补网 (低买高卖)
-            replenished = False
-            for oid, info in filled_orders:
-                side = info["side"]
-                price = info["price"]
-                qty = info["qty"]
-
-                self.log_msg(f"【物理网格】检测到订单成交/消失: {side} @ {price:.4f}，准备反向补网")
-
-                # 如果买单成交，在上方一格挂卖单
-                if side == "buy":
-                    new_price = price * (1 + self.grid_step)
-                    # 增加重试机制
-                    success = False
-                    for retry_idx in range(3):
-                        if self._place_grid_order("sell", qty, new_price):
-                            success = True
-                            replenished = True
-                            break
-                        self.log_msg(f"【物理网格】反向补网(sell)第 {retry_idx+1} 次尝试失败，0.5秒后重试", "WARNING")
-                        time.sleep(0.5)
-                    if not success:
-                        self.log_msg(f"【物理网格】反向补网(sell)失败重试次数耗尽，放弃补网: qty={qty} price={new_price}", "WARNING")
-                # 如果卖单成交，在下方一格挂买单
-                elif side == "sell":
-                    new_price = price * (1 - self.grid_step)
-                    # 增加重试机制
-                    success = False
-                    for retry_idx in range(3):
-                        if self._place_grid_order("buy", qty, new_price):
-                            success = True
-                            replenished = True
-                            break
-                        self.log_msg(f"【物理网格】反向补网(buy)第 {retry_idx+1} 次尝试失败，0.5秒后重试", "WARNING")
-                        time.sleep(0.5)
-                    if not success:
-                        self.log_msg(f"【物理网格】反向补网(buy)失败重试次数耗尽，放弃补网: qty={qty} price={new_price}", "WARNING")
-
-            if replenished or filled_orders:
-                self._save_state()
-
-        except Exception as e:
-            self.log_msg(f"【物理网格】检查成交状态失败: {e}", "WARNING")
 
 class UltimateGridStrategy(threading.Thread):
     managed_symbols_lock = threading.Lock()
@@ -3621,7 +3350,6 @@ class UltimateGridStrategy(threading.Thread):
         self.ml_predictor = MLPredictor()
         self.orderbook = OrderBookAnalyzer(exchange, symbol, orderbook_getter=self.get_cached_orderbook)
         self.funding_predictor = FundingRatePredictor(exchange, symbol)
-        self.grid_optimizer = GridOptimizer(config['base_grid_range'])
         self.ensemble = StrategyEnsemble()
         self.var_calc = VaRCalculator(
             confidence=float(config.get('var_confidence', 0.95)),
@@ -3753,10 +3481,6 @@ class UltimateGridStrategy(threading.Thread):
 
         # 传递唯一的状态文件路径给止损模块
         self.stop_loss._state_file = f"stoploss_state_{self.symbol.replace('/', '_').replace(':', '_')}.json"
-
-        # 物理网格管理器 (Grid Manager)
-        self.grid_manager = PhysicalGridManager(exchange, symbol, self.log_msg)
-        self.grid_mode_active = False
 
         # 自适应入场引擎
         self.adaptive_entry = AdaptiveEntryEngine(self.config, self.log_msg)
@@ -4722,7 +4446,7 @@ class UltimateGridStrategy(threading.Thread):
                     time.sleep(0.2)
                 if self.chaos_pause_until > time.time():
                     self.log_msg(f"混沌暂停中，剩余{int(self.chaos_pause_until-time.time())}s", "WARNING")
-                    self.check_filled_orders(0.5, self.config.get('base_grid_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
+                    self.check_filled_orders(0.5, self.config.get('base_price_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
                     self.reconcile_orders()
                     time.sleep(2)
                     continue
@@ -4746,28 +4470,13 @@ class UltimateGridStrategy(threading.Thread):
                             if self.shockwave_cooldown_until < time.time():
                                 self.shockwave_cooldown_until = time.time() + 180 # 强制冷却 3 分钟
                                 self.log_msg(f"【风控墙】检测到极端瞬时波动 (变化率 {price_change_ratio*100:.2f}%)，触发全局斜率冷却 3 分钟", "WARNING")
-                                if self.grid_mode_active:
-                                    self.log_msg("【安全清理】震波来袭，紧急撤销物理网格挂单", "WARNING")
-                                    self.grid_manager.cancel_all_grids()
-                                    self.grid_mode_active = False
-
                 if self.shockwave_cooldown_until > time.time():
                     remain = int(self.shockwave_cooldown_until - time.time())
                     self.log_msg(f"【风控墙】震波冷却中，剩余 {remain}s，暂缓所有操作", "WARNING")
-                    self.check_filled_orders(0.5, self.config.get('base_grid_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
+                    self.check_filled_orders(0.5, self.config.get('base_price_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
                     self.reconcile_orders()
                     time.sleep(2)
                     continue
-
-                # 如果处于物理网格模式，优先检查网格状态并自动补网
-                if self.grid_mode_active and self.grid_manager.is_running:
-                    self.grid_manager.check_and_replenish()
-
-                    # 检查是否破网 (比如价格偏离中心价超过一定幅度)
-                    if abs(price - self.grid_manager.center_price) / max(1e-8, self.grid_manager.center_price) > (self.grid_manager.grid_step * self.grid_manager.grid_levels * 1.5):
-                        self.log_msg("价格偏离网格中心过大，触发破网撤单保护", "WARNING")
-                        self.grid_manager.cancel_all_grids()
-                        self.grid_mode_active = False
 
                 # 成本屏障：获取最新的配置费率，用于决策引擎
                 maker_fee = float(self.config.get("maker_fee", 0.0002))
@@ -4800,11 +4509,6 @@ class UltimateGridStrategy(threading.Thread):
                 if dynamic_leverage != self.config['leverage']:
                     self.log_msg(f"【第3层】杠杆调整: {self.config['leverage']} -> {dynamic_leverage}")
                 self.config['leverage'] = int(max(1, dynamic_leverage))
-
-                # 更新网格参数优化
-                optimal_range = self.grid_optimizer.update(atr, price, volume_ratio)
-                if abs(optimal_range - self.config['base_grid_range']) > 0.001:
-                    self.log_msg(f"【第9层】网格区间优化: {optimal_range*100:.2f}%")
 
                 # 获取市场状态
                 state = self.monitor.get_market_state()
@@ -4846,13 +4550,8 @@ class UltimateGridStrategy(threading.Thread):
                     if time.time() < self.monitor.global_shockwave_cooldown_until:
                         global_shockwave_active = True
                         self.log_msg(f"【全局风控】检测到大盘(BTC+ETH)系统性崩盘/暴涨，进入全局静默期，暂缓开单", "WARNING")
-                        if self.grid_mode_active:
-                            self.log_msg("【安全清理】大盘震波来袭，紧急撤销物理网格挂单", "WARNING")
-                            self.grid_manager.cancel_all_grids()
-                            self.grid_mode_active = False
-
                 if global_shockwave_active:
-                    self.check_filled_orders(0.5, self.config.get('base_grid_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
+                    self.check_filled_orders(0.5, self.config.get('base_price_range', 0.02), self.config.get('leverage', 3), self.latest_decision or {})
                     self.reconcile_orders()
                     time.sleep(2)
                     continue
@@ -4917,11 +4616,6 @@ class UltimateGridStrategy(threading.Thread):
                 decision, recovery_info = self._apply_recovery_to_decision(decision)
 
                 # 动态收网检查（接入因果引擎实时判定）
-                if self.grid_mode_active and not decision.get("use_physical_grid", False):
-                    self.log_msg("因果引擎判定当前环境不再适合网格，主动收网", "WARNING")
-                    self.grid_manager.cancel_all_grids()
-                    self.grid_mode_active = False
-
                 if self.current_mode == "stealth":
                     exe = decision.get("execution", {})
                     exe["price_type"] = "limit"
@@ -4961,18 +4655,12 @@ class UltimateGridStrategy(threading.Thread):
                 if self._apply_slot_pressure_policy(decision, price, atr):
                     self.check_filled_orders(buy_prob, optimal_range, dynamic_leverage, decision)
                     self.reconcile_orders()
-                    if self.grid_mode_active:
-                        self.grid_manager.cancel_all_grids()
-                        self.grid_mode_active = False
                     time.sleep(1.2)
                     continue
                 if self.suspicious_pause_until > time.time():
                     self.log_msg("反诱饵暂停窗口内，跳过本轮开仓请求", "WARNING")
                     self.check_filled_orders(buy_prob, optimal_range, dynamic_leverage, decision)
                     self.reconcile_orders()
-                    if self.grid_mode_active:
-                        self.grid_manager.cancel_all_grids()
-                        self.grid_mode_active = False
                     time.sleep(2)
                     continue
                 placed = False
@@ -4989,90 +4677,12 @@ class UltimateGridStrategy(threading.Thread):
                 decision["_order_token"] = order_token
 
                 if order_token:
-                    # 检查是否应该铺设物理网格
-                    if decision.get("use_physical_grid", False) and not self.grid_mode_active and not self.has_position:
-                        self.log_msg("满足物理网格条件，切换至网格模式并尝试挂单")
-                        margin_total = float(self.config['margin_usdt'])
-                        used_margin = self._estimate_used_margin_total(refresh_sec=8.0)
-                        available_margin = max(0.0, margin_total - used_margin)
-
-                        symbols_cfg = self.config.get('symbols', [])
-                        symbols_count = len(symbols_cfg) if isinstance(symbols_cfg, (list, tuple)) else 0
-                        active_slots = int(self.config.get('max_active_symbols', DEFAULT_CONFIG.get('max_active_symbols', 6)))
-                        active_slots = max(1, active_slots)
-                        active_est, _, _ = self._estimate_active_occupancy()
-                        slots_left = max(1, active_slots - active_est)
-                        margin_per_symbol = available_margin / slots_left
-
-                        # 留出余量，防止网格挂单把保证金打满
-                        grid_margin = margin_per_symbol * 0.8
-
-                        # 计算单格数量
-                        grid_levels = int(self.grid_manager.grid_levels)
-                        safe_price = max(1e-8, price)
-                        market = self.exchange.market(self.symbol)
-
-                        # 修复缺陷 4：物理网格计算考虑合约面值
-                        contract_size = float(market.get('contractSize', market.get('info', {}).get('quanto_multiplier', 1)) or 1)
-                        is_contract = market.get('contract', False)
-
-                        leverage_for_grid = self._get_confirmed_leverage_for_sizing(dynamic_leverage)
-                        if is_contract and contract_size > 0:
-                            raw_qty = (grid_margin * leverage_for_grid / (safe_price * contract_size)) / (grid_levels * 2)
-                        else:
-                            raw_qty = (grid_margin * leverage_for_grid / safe_price) / (grid_levels * 2)
-
-                        min_amount = float(market.get('limits', {}).get('amount', {}).get('min') or 0.0)
-
-                        # 精度对齐
-                        precision_amount = market.get('precision', {}).get('amount')
-                        if precision_amount is not None:
-                            try:
-                                if isinstance(precision_amount, float) and precision_amount < 1.0:
-                                    step = precision_amount
-                                elif isinstance(precision_amount, int) and precision_amount >= 0:
-                                    step = 10 ** -precision_amount
-                                elif precision_amount == 1.0 or precision_amount == 1:
-                                    step = 1.0
-                                else:
-                                    step = 1.0
-                                qty_per_grid = math.floor(raw_qty / step) * step
-                                if step >= 1.0:
-                                    qty_per_grid = int(qty_per_grid)
-                                else:
-                                    decimals = len(str(step).rstrip('0').split('.')[-1])
-                                    qty_per_grid = round(qty_per_grid, decimals)
-                            except:
-                                qty_per_grid = raw_qty
-                        else:
-                            qty_per_grid = raw_qty
-
-                        if qty_per_grid >= min_amount and qty_per_grid > 0:
-                            success = self.grid_manager.setup_grid(price, optimal_range, grid_levels, qty_per_grid, maker_fee)
-                            if success:
-                                self.grid_mode_active = True
-                                placed = True
-                                self.scheduler.confirm_order(order_token, self.symbol, self.config.get('scheduler_interval_jitter', 0.2))
-                            else:
-                                # 铺网失败（如成本屏障拦截），退回常规下单并重新调度
-                                placed = self.place_one_order(buy_prob, optimal_range, dynamic_leverage, decision)
-                                if placed:
-                                    self.scheduler.confirm_order(order_token, self.symbol, self.config.get('scheduler_interval_jitter', 0.2))
-                                else:
-                                    self.scheduler.cancel_token(order_token)
-                        else:
-                            self.log_msg("分配给物理网格的单格数量小于最小下单量，退回常规下单", "WARNING")
-                            placed = self.place_one_order(buy_prob, optimal_range, dynamic_leverage, decision)
-                            if placed:
-                                self.scheduler.confirm_order(order_token, self.symbol, self.config.get('scheduler_interval_jitter', 0.2))
-                            else:
-                                self.scheduler.cancel_token(order_token)
+                    # 直接下单（网格已移除）
+                    placed = self.place_one_order(buy_prob, optimal_range, dynamic_leverage, decision)
+                    if placed:
+                        self.scheduler.confirm_order(order_token, self.symbol, self.config.get('scheduler_interval_jitter', 0.2))
                     else:
-                        placed = self.place_one_order(buy_prob, optimal_range, dynamic_leverage, decision)
-                        if placed:
-                            self.scheduler.confirm_order(order_token, self.symbol, self.config.get('scheduler_interval_jitter', 0.2))
-                        else:
-                            self.scheduler.cancel_token(order_token)
+                        self.scheduler.cancel_token(order_token)
                 else:
                     wait_sec = self.scheduler.get_wait_seconds() if hasattr(self.scheduler, "get_wait_seconds") else 0
                     if wait_sec <= 0:
@@ -5202,7 +4812,7 @@ class UltimateGridStrategy(threading.Thread):
             self.log_msg(f"市价补单失败: {e}", "ERROR")
             return False
 
-    def place_one_order(self, buy_prob, grid_range, leverage, decision):
+    def place_one_order(self, buy_prob, price_range, leverage, decision):
         try:
             decision = decision if isinstance(decision, dict) else {}
             reason = str(decision.get("reason", ""))
@@ -5387,26 +4997,13 @@ class UltimateGridStrategy(threading.Thread):
             # 这里修复一个隐患：如果当前是加仓，且剩余额度不足以满足 min_amount 的强制要求，也必须拒绝
             remaining_margin = max(0.0, max_margin_per_symbol - total_exposure)
 
-            # 增加一个物理网格铺设时的例外：如果是铺设物理网格，不需要受限于单次加仓的剩余额度，
-            # 因为物理网格会自己拆分金额，且我们相信上面的逻辑已经拦截了。
-            if reason != "grid_setup":
-                max_allowed_notional = remaining_margin * leverage_for_sizing * 1.05 # 允许5%的误差容限
+            max_allowed_notional = remaining_margin * leverage_for_sizing * 1.05 # 允许5%的误差容限
 
-                if notional_value > max_allowed_notional:
-                    self.log_msg(f"【硬性防爆仓拦截】尝试开仓的名义价值({notional_value:.2f}U)超过了当前剩余额度允许上限({max_allowed_notional:.2f}U)，取消下单！(当前总敞口:{total_exposure:.2f}U)", "ERROR")
-                    if self.scheduler:
-                        self.scheduler.cancel_token(decision.get("_order_token", ""))
-                    return False
-            else:
-                # 物理网格虽然不受单笔加仓的剩余额度限制，但也绝不能超过单币种的绝对上限！
-                total_exposure = self.position_margin + pending_notional
-                remaining_for_grid = max(0.0, max_margin_per_symbol - total_exposure)
-                max_allowed_notional_grid = remaining_for_grid * leverage_for_sizing * 1.05
-                if notional_value > max_allowed_notional_grid:
-                    self.log_msg(f"【物理网格硬性拦截】已有敞口{total_exposure:.2f}U + 本次铺网({notional_value/max(1e-8, leverage_for_sizing):.2f}U) 会超过单币上限{max_margin_per_symbol:.2f}U，拒绝铺网！", "ERROR")
-                    if self.scheduler:
-                        self.scheduler.cancel_token(decision.get("_order_token", ""))
-                    return False
+            if notional_value > max_allowed_notional:
+                self.log_msg(f"【硬性防爆仓拦截】尝试开仓的名义价值({notional_value:.2f}U)超过了当前剩余额度允许上限({max_allowed_notional:.2f}U)，取消下单！(当前总敞口:{total_exposure:.2f}U)", "ERROR")
+                if self.scheduler:
+                    self.scheduler.cancel_token(decision.get("_order_token", ""))
+                return False
 
             try:
                 reverse_rate = max(0.0, min(0.02, float(self.config.get("reverse_probe_rate", 0.005))))
@@ -5484,7 +5081,7 @@ class UltimateGridStrategy(threading.Thread):
                 entry_mode, side, price, self.cached_atr,
                 getattr(self, 'cached_bb_upper', 0.0),
                 getattr(self, 'cached_bb_lower', 0.0),
-                grid_range
+                price_range
             )
 
             adaptive_order_type = entry_params.get("order_type", "limit")
@@ -5800,7 +5397,7 @@ class UltimateGridStrategy(threading.Thread):
         except:
             return 0.0
 
-    def check_filled_orders(self, buy_prob, grid_range, leverage, decision):
+    def check_filled_orders(self, buy_prob, price_range, leverage, decision):
         open_map = {}
         try:
             open_orders = api_call(self.exchange.fetch_open_orders, self.symbol)
@@ -5865,7 +5462,7 @@ class UltimateGridStrategy(threading.Thread):
                     cooldown = max(60, int(cooldown * random.uniform(max(0.3, 1.0 - cooldown_jitter), 1.0 + cooldown_jitter)))
                     if time.time() - self.last_order_ts >= cooldown:
                         self.log_msg(f"成交后补单触发（冷却{cooldown}s已满足）")
-                        self.place_one_order(buy_prob, grid_range, leverage, decision)
+                        self.place_one_order(buy_prob, price_range, leverage, decision)
                 elif status in ('open', 'new', 'partially_filled'):
                     timeout_sec = int(order.get("_timeout", 0) or 0)
                     created_ts = float(order.get("_created_ts", 0) or 0)
@@ -6031,11 +5628,7 @@ class UltimateGridStrategy(threading.Thread):
         self.last_param_update = time.time()
 
     def close_all_positions(self, expected_price=None, reason="manual", slippage_estimate=0.0):
-        if hasattr(self, "grid_manager") and self.grid_manager and self.grid_manager.is_running:
-            self.log_msg(f"【安全清理】正在执行全局平仓({reason})，同步撤销物理网格挂单", "WARNING")
-            self.grid_manager.cancel_all_grids()
-            self.grid_mode_active = False
-
+        self.log_msg(f"【安全清理】正在执行全局平仓({reason})", "WARNING")
         all_closed = True
         try:
             positions = api_call(self.exchange.fetch_positions)
@@ -6197,11 +5790,7 @@ class UltimateGridStrategy(threading.Thread):
         return 1.0
 
     def cleanup(self):
-        if hasattr(self, "grid_manager") and self.grid_manager and self.grid_manager.is_running:
-            self.log_msg("【清理】策略停止，撤销物理网格挂单")
-            self.grid_manager.cancel_all_grids()
-            self.grid_mode_active = False
-
+        self.log_msg("【清理】策略停止，撤销所有挂单")
         try:
             if self.ws_stream is not None:
                 self.ws_stream.stop()
