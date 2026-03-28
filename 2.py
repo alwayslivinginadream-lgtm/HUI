@@ -6249,10 +6249,15 @@ class BotGUI:
         self.root = root
         self.root.title("PhoenixQ V1.0 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
+        # PhoenixQ 主题 — 暖金+深灰，凤凰涅槃感
         self.colors = {
-            "bg": "#050508", "panel": "#0a0e17", "fg": "#00f0ff",
-            "accent": "#00e5ff", "danger": "#ff0055", "success": "#39ff14",
-            "warning": "#ffe600"
+            "bg": "#1a1a2e",       # 深靛蓝底色
+            "panel": "#16213e",    # 深海蓝面板
+            "fg": "#e8e8e8",       # 柔白文字
+            "accent": "#f0a500",   # 凤凰金（主强调色）
+            "danger": "#e74c3c",   # 柔红警告
+            "success": "#2ecc71",  # 翡翠绿
+            "warning": "#f39c12"   # 琥珀黄
         }
         self.root.configure(bg=self.colors["bg"])
         try:
@@ -6673,42 +6678,42 @@ class BotGUI:
         DANGER = self.colors["danger"]
         SUCCESS = self.colors["success"]
         WARNING = self.colors["warning"]
-        BORDER = "#1a2a3a"
+        BORDER = "#2a3050"
 
         style = ttk.Style()
         style.theme_use('clam')
         style.configure(".", background=BG, foreground=FG, font=("Consolas", 9))
         style.configure("TNotebook", background=BG, bordercolor=BORDER, tabmargins=[2,2,0,0])
         style.configure("TNotebook.Tab", background=PANEL, foreground=FG, padding=[14,5], font=("Consolas", 9, "bold"), bordercolor=BORDER)
-        style.map("TNotebook.Tab", background=[("selected","#0d1f35"),("active","#102030")], foreground=[("selected",ACCENT),("active",FG)])
+        style.map("TNotebook.Tab", background=[("selected","#1e2d50"),("active","#1a2845")], foreground=[("selected",ACCENT),("active",FG)])
         style.configure("TFrame", background=BG)
         style.configure("TLabel", background=BG, foreground=FG, font=("Consolas", 9))
-        style.configure("TEntry", fieldbackground="#0d1525", foreground=ACCENT, insertcolor=ACCENT, bordercolor=BORDER, font=("Consolas", 9))
-        style.configure("TCombobox", fieldbackground="#0d1525", foreground=ACCENT, selectbackground="#0d1525", selectforeground=ACCENT, background=PANEL, arrowcolor=ACCENT, bordercolor=BORDER, font=("Consolas", 9))
-        style.map("TCombobox", fieldbackground=[("readonly","#0d1525")], foreground=[("readonly",ACCENT)])
+        style.configure("TEntry", fieldbackground="#0f1a30", foreground="#f5f5f5", insertcolor=ACCENT, bordercolor=BORDER, font=("Consolas", 9))
+        style.configure("TCombobox", fieldbackground="#0f1a30", foreground="#f5f5f5", selectbackground="#0f1a30", selectforeground=ACCENT, background=PANEL, arrowcolor=ACCENT, bordercolor=BORDER, font=("Consolas", 9))
+        style.map("TCombobox", fieldbackground=[("readonly","#0f1a30")], foreground=[("readonly","#f5f5f5")])
         style.configure("TCheckbutton", background=BG, foreground=FG, font=("Consolas", 9))
         style.configure("TLabelframe", background=BG, foreground=ACCENT, bordercolor=BORDER, borderwidth=1, padding=8)
         style.configure("TLabelframe.Label", background=BG, foreground=ACCENT, font=("Consolas", 10, "bold"))
         style.configure("TButton", background=PANEL, foreground=FG, borderwidth=1, bordercolor=ACCENT, focuscolor=ACCENT, padding=(10,5), font=("Consolas", 9, "bold"))
-        style.map("TButton", background=[("active",ACCENT)], foreground=[("active","#000000")])
-        style.configure("Start.TButton", background=SUCCESS, foreground="#000000", padding=(12,6), font=("Consolas", 12, "bold"))
-        style.map("Start.TButton", background=[("active","#66ff66")])
-        style.configure("Stop.TButton", background=DANGER, foreground="#ffffff", padding=(12,6), font=("Consolas", 12, "bold"))
-        style.map("Stop.TButton", background=[("active","#ff6699")])
+        style.map("TButton", background=[("active","#2a3a5a")], foreground=[("active",ACCENT)])
+        style.configure("Start.TButton", background="#1a7a3a", foreground="#ffffff", padding=(12,6), font=("Consolas", 12, "bold"))
+        style.map("Start.TButton", background=[("active",SUCCESS)])
+        style.configure("Stop.TButton", background="#8a2020", foreground="#ffffff", padding=(12,6), font=("Consolas", 12, "bold"))
+        style.map("Stop.TButton", background=[("active",DANGER)])
         style.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=FG, rowheight=28, borderwidth=0)
-        style.map("Treeview", background=[('selected',ACCENT)], foreground=[('selected','white')])
-        style.configure("Treeview.Heading", background=BG, foreground=FG, font=("Consolas", 9, "bold"), borderwidth=1)
+        style.map("Treeview", background=[('selected','#2a3a5a')], foreground=[('selected',ACCENT)])
+        style.configure("Treeview.Heading", background=BG, foreground=ACCENT, font=("Consolas", 9, "bold"), borderwidth=1)
 
         # ====== 顶部标题栏 ======
-        header = tk.Frame(self.root, bg="#040610", height=55)
+        header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="◈ PhoenixQ V1.0 // 凤凰量化交易系统 ◈", font=("Consolas", 15, "bold"), bg="#040610", fg=ACCENT).pack(side="left", padx=16)
-        self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#040610", fg=SUCCESS)
+        tk.Label(header, text="🔥 PhoenixQ V1.0 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
-        self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#040610", fg=WARNING)
+        self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
         self.lbl_health.pack(side="right", padx=16)
-        self.lbl_balance = tk.Label(header, text="余额: --- USDT", font=("Consolas", 10, "bold"), bg="#040610", fg=SUCCESS)
+        self.lbl_balance = tk.Label(header, text="余额: --- USDT", font=("Consolas", 10, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_balance.pack(side="right", padx=16)
         tk.Frame(self.root, bg=ACCENT, height=2).pack(fill="x")
 
@@ -6793,7 +6798,7 @@ class BotGUI:
         evo_sw = tk.Frame(fr_evo, bg=BG)
         evo_sw.pack(fill="x", padx=5, pady=3)
         self.var_evolution = tk.BooleanVar(value=bool(self.config.get('evolution_enabled', True)))
-        tk.Checkbutton(evo_sw, text="启用进化引擎", variable=self.var_evolution, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        tk.Checkbutton(evo_sw, text="启用进化引擎", variable=self.var_evolution, bg=BG, fg=FG, selectcolor="#0f1a30", activebackground=BG, font=("Consolas",9)).pack(side="left")
         self.ent_evo_pop = self.create_entry(fr_evo, "进化种群数:", str(self.config.get('evolution_population_size',10)))
         self.ent_evo_mut = self.create_entry(fr_evo, "变异率:", str(self.config.get('evolution_mutation_rate',0.18)))
         self.ent_evo_interval = self.create_entry(fr_evo, "进化间隔(h):", str(self.config.get('evolution_interval_hours',24)))
@@ -6822,7 +6827,7 @@ class BotGUI:
         pool_sw = tk.Frame(fr_pool, bg=BG)
         pool_sw.pack(fill="x", padx=5, pady=3)
         self.var_smart_symbol_enabled = tk.BooleanVar(value=bool(self.config.get('smart_symbol_enabled', True)))
-        tk.Checkbutton(pool_sw, text="启用智能币种池（自动获取成交量前50）", variable=self.var_smart_symbol_enabled, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        tk.Checkbutton(pool_sw, text="启用智能币种池（自动获取成交量前50）", variable=self.var_smart_symbol_enabled, bg=BG, fg=FG, selectcolor="#0f1a30", activebackground=BG, font=("Consolas",9)).pack(side="left")
         pool_info = tk.Frame(fr_pool, bg=BG)
         pool_info.pack(fill="x", padx=5, pady=3)
         tk.Label(pool_info, text="当前池:", bg=BG, fg=FG, font=("Consolas",9)).pack(side="left")
@@ -6830,7 +6835,7 @@ class BotGUI:
         self.lbl_smart_pool_count.pack(side="left", padx=8)
         self.btn_refresh_pool = ttk.Button(pool_info, text="🔄 手动刷新", command=self._gui_refresh_pool)
         self.btn_refresh_pool.pack(side="right", padx=5)
-        pool_note = tk.Label(fr_pool, text="关闭后使用固定回退列表 | 开启后每4小时自动刷新", bg=BG, fg="#666688", font=("Consolas",8))
+        pool_note = tk.Label(fr_pool, text="关闭后使用固定回退列表 | 开启后每4小时自动刷新", bg=BG, fg="#6a7090", font=("Consolas",8))
         pool_note.pack(anchor="w", padx=10, pady=(0,5))
 
         # 自适应入场引擎
@@ -6839,10 +6844,10 @@ class BotGUI:
         entry_sw = tk.Frame(fr_entry, bg=BG)
         entry_sw.pack(fill="x", padx=5, pady=3)
         self.var_adaptive_entry_enabled = tk.BooleanVar(value=bool(self.config.get('adaptive_entry_enabled', True)))
-        tk.Checkbutton(entry_sw, text="启用自适应入场（根据市场状态智能选择入场方式）", variable=self.var_adaptive_entry_enabled, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        tk.Checkbutton(entry_sw, text="启用自适应入场（根据市场状态智能选择入场方式）", variable=self.var_adaptive_entry_enabled, bg=BG, fg=FG, selectcolor="#0f1a30", activebackground=BG, font=("Consolas",9)).pack(side="left")
         entry_info = tk.Frame(fr_entry, bg=BG)
         entry_info.pack(fill="x", padx=5, pady=3)
-        tk.Label(entry_info, text="4种模式: 市价即入 | ATR回撤限价 | 支撑阻力限价 | 分批蜡烛确认", bg=BG, fg="#8888aa", font=("Consolas",8)).pack(anchor="w")
+        tk.Label(entry_info, text="4种模式: 市价即入 | ATR回撤限价 | 支撑阻力限价 | 分批蜡烛确认", bg=BG, fg="#7a7ea0", font=("Consolas",8)).pack(anchor="w")
         mab_frame = tk.Frame(fr_entry, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
         mab_frame.pack(fill="x", padx=8, pady=5)
         tk.Label(mab_frame, text="MAB 学习统计", bg=PANEL, fg=ACCENT, font=("Consolas",9,"bold")).pack(anchor="w", padx=8, pady=(5,2))
@@ -6855,13 +6860,13 @@ class BotGUI:
         causal_sw = tk.Frame(fr_causal, bg=BG)
         causal_sw.pack(fill="x", padx=5, pady=3)
         self.var_causal_enabled = tk.BooleanVar(value=bool(self.config.get('causal_enabled', True)))
-        tk.Checkbutton(causal_sw, text="启用因果推理门控（关闭后跳过因果效应检查）", variable=self.var_causal_enabled, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        tk.Checkbutton(causal_sw, text="启用因果推理门控（关闭后跳过因果效应检查）", variable=self.var_causal_enabled, bg=BG, fg=FG, selectcolor="#0f1a30", activebackground=BG, font=("Consolas",9)).pack(side="left")
         causal_info = tk.Frame(fr_causal, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
         causal_info.pack(fill="x", padx=8, pady=5)
         tk.Label(causal_info, text="当前因果阈值", bg=PANEL, fg=ACCENT, font=("Consolas",9,"bold")).pack(anchor="w", padx=8, pady=(5,2))
         self.lbl_causal_threshold = tk.Label(causal_info, text="基础: -0.01 | 动态: 待启动后更新", bg=PANEL, fg=FG, font=("Consolas",9))
         self.lbl_causal_threshold.pack(fill="x", padx=8, pady=(0,5))
-        causal_note = tk.Label(fr_causal, text="阈值已从0.05降至-0.01，允许轻微负因果也能开单", bg=BG, fg="#666688", font=("Consolas",8))
+        causal_note = tk.Label(fr_causal, text="阈值已从0.05降至-0.01，允许轻微负因果也能开单", bg=BG, fg="#6a7090", font=("Consolas",8))
         causal_note.pack(anchor="w", padx=10, pady=(0,5))
         # ========== Tab3: 高级调参 ==========
         tab3 = tk.Frame(nb, bg=BG)
@@ -6924,7 +6929,7 @@ class BotGUI:
         log_top = tk.Frame(tab4, bg=BG)
         log_top.pack(fill="x", padx=4, pady=(4,0))
         self.var_log_autoscroll = tk.BooleanVar(value=True)
-        tk.Checkbutton(log_top, text="自动滚动", variable=self.var_log_autoscroll, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG).pack(side="left", padx=4)
+        tk.Checkbutton(log_top, text="自动滚动", variable=self.var_log_autoscroll, bg=BG, fg=FG, selectcolor="#0f1a30", activebackground=BG).pack(side="left", padx=4)
 
         self.txt_log = scrolledtext.ScrolledText(tab4, bg=PANEL, fg=FG, font=("Consolas", 10), borderwidth=0, highlightthickness=1, highlightbackground=BG)
         self.txt_log.pack(fill="both", expand=True, padx=4, pady=4)
