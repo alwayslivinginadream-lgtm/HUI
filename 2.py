@@ -60,11 +60,11 @@ DEFAULT_CONFIG = {
     "trail_mult": 1.2,
     "max_holding_hours": 20,
     "causal_enabled": True,
-    "causal_effect_threshold": 0.05,
-    "causal_effect_threshold_base": 0.06,
+    "causal_effect_threshold": -0.01,
+    "causal_effect_threshold_base": 0.005,
     "causal_feedback_alpha": 0.15,
     "causal_blend_weight": 0.45,
-    "causal_uncertainty_penalty": 0.40,
+    "causal_uncertainty_penalty": 0.15,
     "causal_opportunity_cost_weight": 0.35,
     "causal_feature_dim": 13,
     "causal_decay": 0.997,
@@ -2102,9 +2102,11 @@ class CausalDecisionEngine:
         # 将相关性惩罚墙叠加到整体风险惩罚中
         risk_penalty = min(1.0, risk_penalty + corr_wall_penalty * 0.8)
 
-        dynamic_causal_threshold = causal_base + max(0.0, risk_penalty - 0.5) * 0.04 + max(0.0, crowding_score - 0.7) * 0.03
-        dynamic_causal_threshold -= max(0.0, signal_health - 0.8) * 0.02
-        dynamic_causal_threshold += max(0.0, min(0.08, causal_uncertainty * 0.8)) * 0.02
+        dynamic_causal_threshold = causal_base + max(0.0, risk_penalty - 0.5) * 0.02 + max(0.0, crowding_score - 0.7) * 0.015
+        dynamic_causal_threshold -= max(0.0, signal_health - 0.6) * 0.015
+        dynamic_causal_threshold += max(0.0, min(0.04, causal_uncertainty * 0.4)) * 0.01
+        # 防止动态阈值飙高：硬封顶0.05
+        dynamic_causal_threshold = min(0.05, dynamic_causal_threshold)
         dynamic_buy_open = min(0.85, max(0.50, profile["buy_open"] + risk_penalty * 0.06 - (book_score - 0.5) * 0.04))
         dynamic_sell_open = max(0.15, min(0.50, profile["sell_open"] - risk_penalty * 0.06 - (0.5 - book_score) * 0.04))
         dynamic_buy_open = min(0.90, max(0.48, dynamic_buy_open + crowding_penalty * 0.06))
@@ -4210,7 +4212,7 @@ class UltimateGridStrategy(threading.Thread):
         placed_rate = orders_sent / max(1, scheduler_grant)
         orders_per_hour = orders_sent * 3600.0 / elapsed
         target_orders = max(1.0, float(self.config.get("runtime_target_orders_per_hour", 6.0)))
-        target_causal_block = max(0.20, min(0.95, float(self.config.get("runtime_target_causal_block_ratio", 0.55))))
+        target_causal_block = max(0.15, min(0.75, float(self.config.get("runtime_target_causal_block_ratio", 0.35))))
         thr_step = max(0.0005, float(self.config.get("runtime_threshold_step", 0.0015)))
         unc_step = max(0.005, float(self.config.get("runtime_uncertainty_step", 0.02)))
         int_step = max(5, int(self.config.get("runtime_interval_step_sec", 15)))
