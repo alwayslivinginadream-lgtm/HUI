@@ -6247,7 +6247,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("自适应引擎专业级交易系统")
+        self.root.title("PhoenixQ V1.0 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         self.colors = {
             "bg": "#050508", "panel": "#0a0e17", "fg": "#00f0ff",
@@ -6531,6 +6531,13 @@ class BotGUI:
             self.config['operation_mode'] = "自动"
             
         self.config['evolution_enabled'] = bool(self.var_evolution.get())
+        # 新增：智能引擎开关
+        if hasattr(self, 'var_smart_symbol_enabled'):
+            self.config['smart_symbol_enabled'] = bool(self.var_smart_symbol_enabled.get())
+        if hasattr(self, 'var_adaptive_entry_enabled'):
+            self.config['adaptive_entry_enabled'] = bool(self.var_adaptive_entry_enabled.get())
+        if hasattr(self, 'var_causal_enabled'):
+            self.config['causal_enabled'] = bool(self.var_causal_enabled.get())
         try:
             self.config['evolution_population_size'] = max(4, int(self.ent_evo_pop.get().strip()))
         except:
@@ -6659,242 +6666,276 @@ class BotGUI:
             self.log(f"保存配置失败: {e}", "ERROR")
 
     def setup_ui(self):
+        BG = self.colors["bg"]
+        PANEL = self.colors["panel"]
+        FG = self.colors["fg"]
+        ACCENT = self.colors["accent"]
+        DANGER = self.colors["danger"]
+        SUCCESS = self.colors["success"]
+        WARNING = self.colors["warning"]
+        BORDER = "#1a2a3a"
+
         style = ttk.Style()
         style.theme_use('clam')
-        
-        # 现代暗色主题配置
-        style.configure(".", background=self.colors["bg"], foreground=self.colors["fg"], font=("微软雅黑", 9))
-        style.configure("TFrame", background=self.colors["bg"])
-        style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["fg"])
-        style.configure("TLabelframe", background=self.colors["bg"], foreground=self.colors["accent"], bordercolor=self.colors["accent"], borderwidth=1, padding=8)
-        style.configure("TLabelframe.Label", background=self.colors["bg"], foreground=self.colors["accent"], font=("Consolas", 10, "bold"))
-        
-        style.configure("TButton", background=self.colors["panel"], foreground=self.colors["fg"], borderwidth=1, bordercolor=self.colors["accent"], focuscolor=self.colors["accent"], padding=(10, 5), font=("Consolas", 9, "bold"))
-        style.map("TButton", background=[("active", self.colors["accent"])], foreground=[("active", "#000000")])
-        
-        style.configure("Accent.TButton", background=self.colors["accent"], foreground="#000000", padding=(10, 5), font=("Consolas", 12, "bold"))
-        style.map("Accent.TButton", background=[("active", "#ffffff")])
-        
-        style.configure("Danger.TButton", background=self.colors["danger"], foreground="#ffffff", padding=(10, 5), font=("Consolas", 12, "bold"))
-        style.map("Danger.TButton", background=[("active", "#ff6699")])
-        
-        style.configure("TEntry", fieldbackground=self.colors["panel"], foreground=self.colors["fg"], bordercolor=self.colors["accent"], lightcolor=self.colors["panel"], darkcolor=self.colors["panel"], padding=4)
-        
-        # 修复下拉框看不清字的问题，强制深色背景
-        style.configure("TCombobox", fieldbackground=self.colors["panel"], background=self.colors["panel"], foreground=self.colors["fg"], arrowcolor=self.colors["fg"], padding=4)
-        style.map("TCombobox", fieldbackground=[("readonly", self.colors["panel"])], selectbackground=[("readonly", self.colors["accent"])], selectforeground=[("readonly", "#000000")])
-        
-        style.configure("Treeview", background=self.colors["panel"], fieldbackground=self.colors["panel"], foreground=self.colors["fg"], rowheight=28, borderwidth=0)
-        style.map("Treeview", background=[('selected', self.colors["accent"])], foreground=[('selected', 'white')])
-        style.configure("Treeview.Heading", background=self.colors["bg"], foreground=self.colors["fg"], font=("微软雅黑", 9, "bold"), borderwidth=1)
-        style.map("Treeview.Heading", background=[('active', self.colors["panel"])])
+        style.configure(".", background=BG, foreground=FG, font=("Consolas", 9))
+        style.configure("TNotebook", background=BG, bordercolor=BORDER, tabmargins=[2,2,0,0])
+        style.configure("TNotebook.Tab", background=PANEL, foreground=FG, padding=[14,5], font=("Consolas", 9, "bold"), bordercolor=BORDER)
+        style.map("TNotebook.Tab", background=[("selected","#0d1f35"),("active","#102030")], foreground=[("selected",ACCENT),("active",FG)])
+        style.configure("TFrame", background=BG)
+        style.configure("TLabel", background=BG, foreground=FG, font=("Consolas", 9))
+        style.configure("TEntry", fieldbackground="#0d1525", foreground=ACCENT, insertcolor=ACCENT, bordercolor=BORDER, font=("Consolas", 9))
+        style.configure("TCombobox", fieldbackground="#0d1525", foreground=ACCENT, selectbackground="#0d1525", selectforeground=ACCENT, background=PANEL, arrowcolor=ACCENT, bordercolor=BORDER, font=("Consolas", 9))
+        style.map("TCombobox", fieldbackground=[("readonly","#0d1525")], foreground=[("readonly",ACCENT)])
+        style.configure("TCheckbutton", background=BG, foreground=FG, font=("Consolas", 9))
+        style.configure("TLabelframe", background=BG, foreground=ACCENT, bordercolor=BORDER, borderwidth=1, padding=8)
+        style.configure("TLabelframe.Label", background=BG, foreground=ACCENT, font=("Consolas", 10, "bold"))
+        style.configure("TButton", background=PANEL, foreground=FG, borderwidth=1, bordercolor=ACCENT, focuscolor=ACCENT, padding=(10,5), font=("Consolas", 9, "bold"))
+        style.map("TButton", background=[("active",ACCENT)], foreground=[("active","#000000")])
+        style.configure("Start.TButton", background=SUCCESS, foreground="#000000", padding=(12,6), font=("Consolas", 12, "bold"))
+        style.map("Start.TButton", background=[("active","#66ff66")])
+        style.configure("Stop.TButton", background=DANGER, foreground="#ffffff", padding=(12,6), font=("Consolas", 12, "bold"))
+        style.map("Stop.TButton", background=[("active","#ff6699")])
+        style.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=FG, rowheight=28, borderwidth=0)
+        style.map("Treeview", background=[('selected',ACCENT)], foreground=[('selected','white')])
+        style.configure("Treeview.Heading", background=BG, foreground=FG, font=("Consolas", 9, "bold"), borderwidth=1)
 
-        header = tk.Frame(self.root, bg=self.colors["panel"], height=60)
+        # ====== 顶部标题栏 ======
+        header = tk.Frame(self.root, bg="#040610", height=55)
         header.pack(fill="x")
-        # 添加一些立体感和边距
         header.pack_propagate(False)
-        tk.Label(header, text="ADAPTIVE PRO TRADING SYSTEM // V80", font=("Consolas", 18, "bold"),
-                 bg=self.colors["panel"], fg=self.colors["accent"]).pack(side="left", padx=20)
+        tk.Label(header, text="◈ PhoenixQ V1.0 // 凤凰量化交易系统 ◈", font=("Consolas", 15, "bold"), bg="#040610", fg=ACCENT).pack(side="left", padx=16)
+        self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#040610", fg=SUCCESS)
+        self.lbl_status.pack(side="right", padx=16)
+        self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#040610", fg=WARNING)
+        self.lbl_health.pack(side="right", padx=16)
+        self.lbl_balance = tk.Label(header, text="余额: --- USDT", font=("Consolas", 10, "bold"), bg="#040610", fg=SUCCESS)
+        self.lbl_balance.pack(side="right", padx=16)
+        tk.Frame(self.root, bg=ACCENT, height=2).pack(fill="x")
 
-        self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 12, "bold"),
-                                   bg=self.colors["panel"], fg=self.colors["success"])
-        self.lbl_status.pack(side="right", padx=20)
-        self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10),
-                                   bg=self.colors["panel"], fg=self.colors["warning"])
-        self.lbl_health.pack(side="right", padx=20)
-        
-        # 头部底部分隔线
-        separator = tk.Frame(self.root, bg=self.colors["accent"], height=2)
-        separator.pack(fill="x")
-        
-        # 新增的全局命令栏（置于顶部）
-        command_bar = tk.Frame(self.root, bg=self.colors["bg"])
-        command_bar.pack(fill="x", pady=5)
-        
-        self.btn_start = ttk.Button(command_bar, text="▶ 启动核心引擎 (START ENGINE)", command=self.start, style="Accent.TButton")
-        self.btn_start.pack(side="left", padx=10, pady=5, fill="x", expand=True, ipady=8)
-        
-        self.btn_stop = ttk.Button(command_bar, text="⏹ 紧急熔断 (EMERGENCY STOP)", command=self.stop, style="Danger.TButton")
-        self.btn_stop.pack(side="right", padx=10, pady=5, fill="x", expand=True, ipady=8)
+        # ====== 启动/停止按钮栏 ======
+        cmd_bar = tk.Frame(self.root, bg=BG)
+        cmd_bar.pack(fill="x", pady=4, padx=8)
+        self.btn_start = ttk.Button(cmd_bar, text="▶ 启动引擎", command=self.start, style="Start.TButton")
+        self.btn_start.pack(side="left", padx=6, ipady=4)
+        self.btn_stop = ttk.Button(cmd_bar, text="⏹ 紧急熔断", command=self.stop, style="Stop.TButton")
+        self.btn_stop.pack(side="left", padx=6, ipady=4)
         self.btn_stop["state"] = "disabled"
-        
-        separator2 = tk.Frame(self.root, bg=self.colors["panel"], height=1)
-        separator2.pack(fill="x")
+        tk.Frame(self.root, bg=BORDER, height=1).pack(fill="x")
+        # ====== Notebook 主体 ======
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=6, pady=4)
 
-        main = tk.Frame(self.root, bg=self.colors["bg"])
-        main.pack(fill="both", expand=True, padx=10, pady=10)
+        # ========== Tab1: 交易参数 ==========
+        tab1 = tk.Frame(nb, bg=BG)
+        nb.add(tab1, text=" 📊 交易参数 ")
+        t1_canvas = tk.Canvas(tab1, bg=BG, highlightthickness=0)
+        t1_sb = ttk.Scrollbar(tab1, orient="vertical", command=t1_canvas.yview)
+        t1_inner = tk.Frame(t1_canvas, bg=BG)
+        t1_canvas.create_window((0,0), window=t1_inner, anchor="nw", tags="inner")
+        t1_inner.bind("<Configure>", lambda e: t1_canvas.configure(scrollregion=t1_canvas.bbox("all")))
+        t1_canvas.bind("<Configure>", lambda e: t1_canvas.itemconfig("inner", width=e.width))
+        t1_canvas.configure(yscrollcommand=t1_sb.set)
+        t1_canvas.pack(side="left", fill="both", expand=True)
+        t1_sb.pack(side="right", fill="y")
 
-        # ---------------- 左侧带滚动条的面板 ----------------
-        left_outer = tk.Frame(main, bg=self.colors["bg"], width=360)
-        left_outer.pack(side="left", fill="y", padx=(0, 5))
-        left_outer.pack_propagate(False) # 固定宽度
+        # API配置
+        fr_api = ttk.LabelFrame(t1_inner, text="API 配置")
+        fr_api.pack(fill="x", pady=5, padx=8)
+        self.ent_key = self.create_entry(fr_api, "API Key:", self.config.get('api_key',''), show="*")
+        self.ent_sec = self.create_entry(fr_api, "Secret:", self.config.get('api_secret',''), show="*")
 
-        self.left_canvas = tk.Canvas(left_outer, bg=self.colors["bg"], highlightthickness=0)
-        self.left_scrollbar = ttk.Scrollbar(left_outer, orient="vertical", command=self.left_canvas.yview)
-        
-        left = tk.Frame(self.left_canvas, bg=self.colors["bg"])
-        self.left_canvas.create_window((0, 0), window=left, anchor="nw", width=340)
-        
-        def _on_left_configure(event):
-            self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
-        left.bind("<Configure>", _on_left_configure)
-        
-        def _on_left_mousewheel(event):
-            # 简单判断鼠标是否在左侧区域
-            if event.x_root < self.root.winfo_rootx() + 380:
-                self.left_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-                
-        self.root.bind_all("<MouseWheel>", _on_left_mousewheel)
+        # 代理配置
+        fr_proxy = ttk.LabelFrame(t1_inner, text="代理配置")
+        fr_proxy.pack(fill="x", pady=5, padx=8)
+        self.ent_proxy_host = self.create_entry(fr_proxy, "代理IP:", str(self.config.get('proxy_host','127.0.0.1')))
+        self.ent_proxy_port = self.create_entry(fr_proxy, "代理端口:", str(self.config.get('proxy_port',10808)))
 
-        self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
-        self.left_canvas.pack(side="left", fill="both", expand=True)
-        self.left_scrollbar.pack(side="right", fill="y")
-        # --------------------------------------------------
+        # 基础交易参数
+        fr_base = ttk.LabelFrame(t1_inner, text="基础交易参数")
+        fr_base.pack(fill="x", pady=5, padx=8)
+        self.ent_margin = self.create_entry(fr_base, "总仓位额度(U):", str(self.config.get('margin_usdt',10)))
+        self.ent_lev = self.create_entry(fr_base, "杠杆倍数:", str(self.config.get('leverage',3)))
+        self.ent_max_hold = self.create_entry(fr_base, "持币数量上限:", str(self.config.get('max_active_symbols',2)))
 
-        right = tk.Frame(main, bg=self.colors["bg"])
-        right.pack(side="right", fill="both", expand=True, padx=5)
-
-        fr_api = ttk.LabelFrame(left, text="API 配置")
-        fr_api.pack(fill="x", pady=5)
-        self.ent_key = self.create_entry(fr_api, "API Key:", self.config.get('api_key', ''), show="*")
-        self.ent_sec = self.create_entry(fr_api, "Secret:", self.config.get('api_secret', ''), show="*")
-
-        fr_proxy = ttk.LabelFrame(left, text="代理配置")
-        fr_proxy.pack(fill="x", pady=5)
-        self.ent_proxy_host = self.create_entry(fr_proxy, "代理IP:", str(self.config.get('proxy_host', '127.0.0.1')))
-        self.ent_proxy_port = self.create_entry(fr_proxy, "代理端口:", str(self.config.get('proxy_port', 10808)))
-
-        fr_param = ttk.LabelFrame(left, text="交易参数")
-        fr_param.pack(fill="x", pady=5)
-        bal_row = tk.Frame(fr_param, bg=self.colors["bg"])
-        bal_row.pack(fill="x", padx=5, pady=2)
-        tk.Label(bal_row, text="账户余额:", width=13, anchor="w", bg=self.colors["bg"], fg=self.colors["fg"]).pack(side="left")
-        self.lbl_balance = tk.Label(bal_row, text="--- USDT", anchor="w", bg=self.colors["bg"], fg=self.colors["success"], font=("Consolas", 10, "bold"))
-        self.lbl_balance.pack(side="right", fill="x", expand=True)
-        self.ent_margin = self.create_entry(fr_param, "总仓位额度(U):", str(self.config.get('margin_usdt', 10)))
-        self.ent_lev = self.create_entry(fr_param, "杠杆倍数:", str(self.config.get('leverage', 3)))
-        self.ent_max_hold = self.create_entry(fr_param, "持币数量上限:", str(self.config.get('max_active_symbols', 2)))
-        fr_tune = ttk.LabelFrame(left, text="风格调参(可手调)")
-        fr_tune.pack(fill="x", pady=5)
-        tune_top = tk.Frame(fr_tune, bg=self.colors["bg"])
-        tune_top.pack(fill="x", padx=5, pady=(2, 0))
-        self.var_tune_expand = tk.BooleanVar(value=False)
-        self.btn_tune_toggle = ttk.Button(tune_top, text="展开调参", command=self.toggle_tune_panel)
-        self.btn_tune_toggle.pack(side="right")
-        self.tune_body = tk.Frame(fr_tune, bg=self.colors["bg"])
-        self.ent_max_var = self.create_entry(self.tune_body, "最大VaR:", str(self.config.get('max_portfolio_var', 0.04)))
-        self.ent_funding_th = self.create_entry(self.tune_body, "费率阈值:", str(self.config.get('funding_rate_threshold', 0.00025)))
-        self.ent_style_var_scale = self.create_entry(self.tune_body, "风格VaR系数:", str(self.config.get('style_var_scale', 1.8)))
-        self.ent_runtime_orders = self.create_entry(self.tune_body, "目标单/小时:", str(self.config.get('runtime_target_orders_per_hour', 4.5)))
-        self.ent_market_conf = self.create_entry(self.tune_body, "市价置信:", str(self.config.get('execution_market_confidence', 0.86)))
-        self.ent_aggr_conf = self.create_entry(self.tune_body, "激进置信:", str(self.config.get('execution_aggressive_confidence', 0.67)))
-        self.ent_random_skip = self.create_entry(self.tune_body, "随机跳过:", str(self.config.get('random_skip_rate', 0.03)))
-        self.ent_scheduler_skip = self.create_entry(self.tune_body, "调度跳过:", str(self.config.get('scheduler_skip_prob', 0.03)))
-        self.ent_slip_alarm = self.create_entry(self.tune_body, "滑点告警:", str(self.config.get('max_slippage_alarm', 0.0018)))
-        self.ent_recovery_budget = self.create_entry(self.tune_body, "恢复预算占比:", str(self.config.get('recovery_budget_ratio', 0.15)))
-        self.ent_recovery_target = self.create_entry(self.tune_body, "日恢复目标:", str(self.config.get('recovery_daily_target_pct', 0.004)))
-        self.ent_recovery_boost = self.create_entry(self.tune_body, "恢复最大放大:", str(self.config.get('recovery_max_boost', 0.45)))
-        self.ent_ob_confirm_ticks = self.create_entry(self.tune_body, "盘口确认tick:", str(self.config.get('orderbook_confirm_ticks', 3)))
-        self.ent_stop_confirm_sec = self.create_entry(self.tune_body, "止损确认秒:", str(self.config.get('stop_confirm_window_sec', 6)))
-        self.ent_mode_dwell_sec = self.create_entry(self.tune_body, "模式驻留秒:", str(self.config.get('mode_min_dwell_sec', 900)))
-        preset_row = tk.Frame(self.tune_body, bg=self.colors["bg"])
-        preset_row.pack(fill="x", padx=5, pady=4)
-        
-        # 使用网格布局让按钮更紧凑好看
-        ttk.Button(preset_row, text="保守", command=lambda: self.apply_risk_preset("conservative"), width=5).grid(row=0, column=0, padx=2, pady=2)
-        ttk.Button(preset_row, text="均衡", command=lambda: self.apply_risk_preset("balanced"), width=5).grid(row=0, column=1, padx=2, pady=2)
-        ttk.Button(preset_row, text="激进", command=lambda: self.apply_risk_preset("aggressive"), width=5).grid(row=0, column=2, padx=2, pady=2)
-        ttk.Button(preset_row, text="狂暴", command=lambda: self.apply_risk_preset("furious"), width=5).grid(row=0, column=3, padx=2, pady=2)
-        ttk.Button(preset_row, text="自调", command=lambda: self.log("自调模式：请直接修改上方参数，系统启动时将自动应用", "INFO"), width=5).grid(row=0, column=4, padx=2, pady=2)
-        
-        self.toggle_tune_panel(force=True)
-        
-        op_mode_row = tk.Frame(fr_param, bg=self.colors["bg"])
-        op_mode_row.pack(fill="x", padx=5, pady=2)
-        tk.Label(op_mode_row, text="运行模式:", width=13, anchor="w", bg=self.colors["bg"], fg=self.colors["fg"]).pack(side="left")
-        self.cmb_op_mode = ttk.Combobox(op_mode_row, state="readonly", values=["自动", "生存优先", "效率优先"], width=10)
-        op_mode_default = str(self.config.get('operation_mode', '自动'))
-        if op_mode_default not in ["自动", "生存优先", "效率优先"]:
-            op_mode_default = "自动"
+        # 运行模式
+        fr_mode = ttk.LabelFrame(t1_inner, text="运行模式")
+        fr_mode.pack(fill="x", pady=5, padx=8)
+        mode_row1 = tk.Frame(fr_mode, bg=BG)
+        mode_row1.pack(fill="x", padx=5, pady=3)
+        tk.Label(mode_row1, text="运行模式:", width=13, anchor="w", bg=BG, fg=FG).pack(side="left")
+        self.cmb_op_mode = ttk.Combobox(mode_row1, state="readonly", values=["自动","生存优先","效率优先"], width=12)
+        op_mode_default = str(self.config.get('operation_mode','自动'))
+        if op_mode_default not in ["自动","生存优先","效率优先"]: op_mode_default = "自动"
         self.cmb_op_mode.set(op_mode_default)
         self.cmb_op_mode.pack(side="right", fill="x", expand=True)
 
-        style_row = tk.Frame(fr_param, bg=self.colors["bg"])
-        style_row.pack(fill="x", padx=5, pady=2)
-        tk.Label(style_row, text="策略风格:", width=13, anchor="w", bg=self.colors["bg"], fg=self.colors["fg"]).pack(side="left")
-        self.cmb_style = ttk.Combobox(style_row, state="readonly", values=["自动", "保守", "均衡", "激进"], width=10)
-        style_default = str(self.config.get('strategy_style', '自动'))
-        if style_default not in ["自动", "保守", "均衡", "激进"]:
-            style_default = "自动"
+        mode_row2 = tk.Frame(fr_mode, bg=BG)
+        mode_row2.pack(fill="x", padx=5, pady=3)
+        tk.Label(mode_row2, text="策略风格:", width=13, anchor="w", bg=BG, fg=FG).pack(side="left")
+        self.cmb_style = ttk.Combobox(mode_row2, state="readonly", values=["自动","保守","均衡","激进"], width=12)
+        style_default = str(self.config.get('strategy_style','自动'))
+        if style_default not in ["自动","保守","均衡","激进"]: style_default = "自动"
         self.cmb_style.set(style_default)
         self.cmb_style.pack(side="right", fill="x", expand=True)
-        evo_row = tk.Frame(fr_param, bg=self.colors["bg"])
-        evo_row.pack(fill="x", padx=5, pady=2)
-        tk.Label(evo_row, text="策略进化:", width=13, anchor="w", bg=self.colors["bg"], fg=self.colors["fg"]).pack(side="left")
-        self.var_evolution = tk.BooleanVar(value=bool(self.config.get('evolution_enabled', True)))
-        tk.Checkbutton(
-            evo_row,
-            text="启用第19层",
-            variable=self.var_evolution,
-            bg=self.colors["bg"],
-            fg=self.colors["fg"],
-            selectcolor=self.colors["panel"],
-            activebackground=self.colors["bg"]
-        ).pack(side="right")
-        self.ent_evo_pop = self.create_entry(fr_param, "进化种群数:", str(self.config.get('evolution_population_size', 10)))
-        self.ent_evo_mut = self.create_entry(fr_param, "变异率:", str(self.config.get('evolution_mutation_rate', 0.18)))
-        self.ent_evo_interval = self.create_entry(fr_param, "进化间隔(h):", str(self.config.get('evolution_interval_hours', 24)))
 
-        rotate_row = tk.Frame(fr_param, bg=self.colors["bg"])
-        rotate_row.pack(fill="x", padx=5, pady=2)
-        tk.Label(rotate_row, text="防并发节流(秒):", width=13, anchor="w", bg=self.colors["bg"], fg=self.colors["fg"]).pack(side="left")
-        self.cmb_rotate_seconds = ttk.Combobox(rotate_row, state="readonly", values=["10", "30", "60", "120", "300"], width=10)
-        rotate_default = str(int(self.config.get('global_order_interval', 60)))
-        if rotate_default not in ["10", "30", "60", "120", "300"]:
-            rotate_default = "60"
+        mode_row3 = tk.Frame(fr_mode, bg=BG)
+        mode_row3.pack(fill="x", padx=5, pady=3)
+        tk.Label(mode_row3, text="防并发节流(秒):", width=13, anchor="w", bg=BG, fg=FG).pack(side="left")
+        self.cmb_rotate_seconds = ttk.Combobox(mode_row3, state="readonly", values=["10","30","60","120","300"], width=12)
+        rotate_default = str(int(self.config.get('global_order_interval',60)))
+        if rotate_default not in ["10","30","60","120","300"]: rotate_default = "60"
         self.cmb_rotate_seconds.set(rotate_default)
         self.cmb_rotate_seconds.pack(side="right", fill="x", expand=True)
-        sym_btn_row = tk.Frame(fr_param, bg=self.colors["bg"])
-        sym_btn_row.pack(fill="x", padx=5, pady=2)
-        ttk.Button(sym_btn_row, text="打开币种管理", command=self.open_symbol_manager).pack(side="right")
 
-        self.fr_sym = ttk.LabelFrame(left, text=f"币种选择（{len(self.available_symbols)}个）")
-        self.fr_sym.pack(fill="x", pady=5)
-        sym_ops = tk.Frame(self.fr_sym, bg=self.colors["bg"])
+        # 进化引擎
+        fr_evo = ttk.LabelFrame(t1_inner, text="进化引擎 (第19层)")
+        fr_evo.pack(fill="x", pady=5, padx=8)
+        evo_sw = tk.Frame(fr_evo, bg=BG)
+        evo_sw.pack(fill="x", padx=5, pady=3)
+        self.var_evolution = tk.BooleanVar(value=bool(self.config.get('evolution_enabled', True)))
+        tk.Checkbutton(evo_sw, text="启用进化引擎", variable=self.var_evolution, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        self.ent_evo_pop = self.create_entry(fr_evo, "进化种群数:", str(self.config.get('evolution_population_size',10)))
+        self.ent_evo_mut = self.create_entry(fr_evo, "变异率:", str(self.config.get('evolution_mutation_rate',0.18)))
+        self.ent_evo_interval = self.create_entry(fr_evo, "进化间隔(h):", str(self.config.get('evolution_interval_hours',24)))
+
+        # 币种选择
+        self.fr_sym = ttk.LabelFrame(t1_inner, text=f"币种选择 ({len(self.available_symbols)}个)")
+        self.fr_sym.pack(fill="x", pady=5, padx=8)
+        sym_ops = tk.Frame(self.fr_sym, bg=BG)
         sym_ops.pack(fill="x", padx=5, pady=4)
         self.ent_symbol_input = ttk.Entry(sym_ops)
-        self.ent_symbol_input.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.ent_symbol_input.pack(side="left", fill="x", expand=True, padx=(0,4))
         ttk.Button(sym_ops, text="添加", command=self.add_symbol).pack(side="left", padx=2)
         ttk.Button(sym_ops, text="删除", command=self.delete_symbol).pack(side="left", padx=2)
-        
-        # 移除内部滚动，完全依赖外部 left_canvas 的滚动
-        self.sym_list_frame = tk.Frame(self.fr_sym, bg=self.colors["bg"])
+        ttk.Button(sym_ops, text="币种管理", command=self.open_symbol_manager).pack(side="left", padx=2)
+        self.sym_list_frame = tk.Frame(self.fr_sym, bg=BG)
         self.sym_list_frame.pack(fill="x", padx=5, pady=5)
-        
         self.sym_vars = {}
         self.refresh_symbol_checkboxes()
+        # ========== Tab2: 智能引擎 ==========
+        tab2 = tk.Frame(nb, bg=BG)
+        nb.add(tab2, text=" 🧠 智能引擎 ")
 
-        right_top = tk.Frame(right, bg=self.colors["bg"])
-        right_top.pack(fill="x", pady=(0, 4))
+        # 智能币种池
+        fr_pool = ttk.LabelFrame(tab2, text="智能币种池")
+        fr_pool.pack(fill="x", pady=8, padx=8)
+        pool_sw = tk.Frame(fr_pool, bg=BG)
+        pool_sw.pack(fill="x", padx=5, pady=3)
+        self.var_smart_symbol_enabled = tk.BooleanVar(value=bool(self.config.get('smart_symbol_enabled', True)))
+        tk.Checkbutton(pool_sw, text="启用智能币种池（自动获取成交量前50）", variable=self.var_smart_symbol_enabled, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        pool_info = tk.Frame(fr_pool, bg=BG)
+        pool_info.pack(fill="x", padx=5, pady=3)
+        tk.Label(pool_info, text="当前池:", bg=BG, fg=FG, font=("Consolas",9)).pack(side="left")
+        self.lbl_smart_pool_count = tk.Label(pool_info, text=f"{len(self.available_symbols)} 个币种", bg=BG, fg=SUCCESS, font=("Consolas",10,"bold"))
+        self.lbl_smart_pool_count.pack(side="left", padx=8)
+        self.btn_refresh_pool = ttk.Button(pool_info, text="🔄 手动刷新", command=self._gui_refresh_pool)
+        self.btn_refresh_pool.pack(side="right", padx=5)
+        pool_note = tk.Label(fr_pool, text="关闭后使用固定回退列表 | 开启后每4小时自动刷新", bg=BG, fg="#666688", font=("Consolas",8))
+        pool_note.pack(anchor="w", padx=10, pady=(0,5))
+
+        # 自适应入场引擎
+        fr_entry = ttk.LabelFrame(tab2, text="自适应入场引擎 (MAB强化学习)")
+        fr_entry.pack(fill="x", pady=8, padx=8)
+        entry_sw = tk.Frame(fr_entry, bg=BG)
+        entry_sw.pack(fill="x", padx=5, pady=3)
+        self.var_adaptive_entry_enabled = tk.BooleanVar(value=bool(self.config.get('adaptive_entry_enabled', True)))
+        tk.Checkbutton(entry_sw, text="启用自适应入场（根据市场状态智能选择入场方式）", variable=self.var_adaptive_entry_enabled, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        entry_info = tk.Frame(fr_entry, bg=BG)
+        entry_info.pack(fill="x", padx=5, pady=3)
+        tk.Label(entry_info, text="4种模式: 市价即入 | ATR回撤限价 | 支撑阻力限价 | 分批蜡烛确认", bg=BG, fg="#8888aa", font=("Consolas",8)).pack(anchor="w")
+        mab_frame = tk.Frame(fr_entry, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        mab_frame.pack(fill="x", padx=8, pady=5)
+        tk.Label(mab_frame, text="MAB 学习统计", bg=PANEL, fg=ACCENT, font=("Consolas",9,"bold")).pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_mab_stats = tk.Label(mab_frame, text="市价即入: 0次 | ATR回撤: 0次 | 支撑阻力: 0次 | 分批确认: 0次", bg=PANEL, fg=FG, font=("Consolas",9), anchor="w", justify="left")
+        self.lbl_mab_stats.pack(fill="x", padx=8, pady=(0,5))
+
+        # 因果推理引擎
+        fr_causal = ttk.LabelFrame(tab2, text="因果推理引擎 (第10层)")
+        fr_causal.pack(fill="x", pady=8, padx=8)
+        causal_sw = tk.Frame(fr_causal, bg=BG)
+        causal_sw.pack(fill="x", padx=5, pady=3)
+        self.var_causal_enabled = tk.BooleanVar(value=bool(self.config.get('causal_enabled', True)))
+        tk.Checkbutton(causal_sw, text="启用因果推理门控（关闭后跳过因果效应检查）", variable=self.var_causal_enabled, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG, font=("Consolas",9)).pack(side="left")
+        causal_info = tk.Frame(fr_causal, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        causal_info.pack(fill="x", padx=8, pady=5)
+        tk.Label(causal_info, text="当前因果阈值", bg=PANEL, fg=ACCENT, font=("Consolas",9,"bold")).pack(anchor="w", padx=8, pady=(5,2))
+        self.lbl_causal_threshold = tk.Label(causal_info, text="基础: -0.01 | 动态: 待启动后更新", bg=PANEL, fg=FG, font=("Consolas",9))
+        self.lbl_causal_threshold.pack(fill="x", padx=8, pady=(0,5))
+        causal_note = tk.Label(fr_causal, text="阈值已从0.05降至-0.01，允许轻微负因果也能开单", bg=BG, fg="#666688", font=("Consolas",8))
+        causal_note.pack(anchor="w", padx=10, pady=(0,5))
+        # ========== Tab3: 高级调参 ==========
+        tab3 = tk.Frame(nb, bg=BG)
+        nb.add(tab3, text=" 🔧 高级调参 ")
+        t3_canvas = tk.Canvas(tab3, bg=BG, highlightthickness=0)
+        t3_sb = ttk.Scrollbar(tab3, orient="vertical", command=t3_canvas.yview)
+        t3_inner = tk.Frame(t3_canvas, bg=BG)
+        t3_canvas.create_window((0,0), window=t3_inner, anchor="nw", tags="t3inner")
+        t3_inner.bind("<Configure>", lambda e: t3_canvas.configure(scrollregion=t3_canvas.bbox("all")))
+        t3_canvas.bind("<Configure>", lambda e: t3_canvas.itemconfig("t3inner", width=e.width))
+        t3_canvas.configure(yscrollcommand=t3_sb.set)
+        t3_canvas.pack(side="left", fill="both", expand=True)
+        t3_sb.pack(side="right", fill="y")
+
+        # 风格预设
+        fr_preset = ttk.LabelFrame(t3_inner, text="风格预设（一键切换）")
+        fr_preset.pack(fill="x", pady=5, padx=8)
+        preset_row = tk.Frame(fr_preset, bg=BG)
+        preset_row.pack(fill="x", padx=5, pady=5)
+        ttk.Button(preset_row, text="🛡 保守", command=lambda: self.apply_risk_preset("conservative")).pack(side="left", padx=4)
+        ttk.Button(preset_row, text="⚖ 均衡", command=lambda: self.apply_risk_preset("balanced")).pack(side="left", padx=4)
+        ttk.Button(preset_row, text="🔥 激进", command=lambda: self.apply_risk_preset("aggressive")).pack(side="left", padx=4)
+        ttk.Button(preset_row, text="💀 狂暴", command=lambda: self.apply_risk_preset("furious")).pack(side="left", padx=4)
+
+        # 风控参数
+        fr_risk = ttk.LabelFrame(t3_inner, text="风控参数")
+        fr_risk.pack(fill="x", pady=5, padx=8)
+        self.ent_max_var = self.create_entry(fr_risk, "最大VaR:", str(self.config.get('max_portfolio_var',0.04)))
+        self.ent_funding_th = self.create_entry(fr_risk, "费率阈值:", str(self.config.get('funding_rate_threshold',0.00025)))
+        self.ent_style_var_scale = self.create_entry(fr_risk, "风格VaR系数:", str(self.config.get('style_var_scale',1.8)))
+
+        # 执行参数
+        fr_exec = ttk.LabelFrame(t3_inner, text="执行参数")
+        fr_exec.pack(fill="x", pady=5, padx=8)
+        self.ent_runtime_orders = self.create_entry(fr_exec, "目标单/小时:", str(self.config.get('runtime_target_orders_per_hour',4.5)))
+        self.ent_market_conf = self.create_entry(fr_exec, "市价置信:", str(self.config.get('execution_market_confidence',0.86)))
+        self.ent_aggr_conf = self.create_entry(fr_exec, "激进置信:", str(self.config.get('execution_aggressive_confidence',0.67)))
+        self.ent_random_skip = self.create_entry(fr_exec, "随机跳过:", str(self.config.get('random_skip_rate',0.03)))
+        self.ent_scheduler_skip = self.create_entry(fr_exec, "调度跳过:", str(self.config.get('scheduler_skip_prob',0.03)))
+        self.ent_slip_alarm = self.create_entry(fr_exec, "滑点告警:", str(self.config.get('max_slippage_alarm',0.0018)))
+
+        # 恢复参数
+        fr_recovery = ttk.LabelFrame(t3_inner, text="恢复参数")
+        fr_recovery.pack(fill="x", pady=5, padx=8)
+        self.ent_recovery_budget = self.create_entry(fr_recovery, "恢复预算占比:", str(self.config.get('recovery_budget_ratio',0.15)))
+        self.ent_recovery_target = self.create_entry(fr_recovery, "日恢复目标:", str(self.config.get('recovery_daily_target_pct',0.004)))
+        self.ent_recovery_boost = self.create_entry(fr_recovery, "恢复最大放大:", str(self.config.get('recovery_max_boost',0.45)))
+
+        # 微调参数
+        fr_micro = ttk.LabelFrame(t3_inner, text="微调参数")
+        fr_micro.pack(fill="x", pady=5, padx=8)
+        self.ent_ob_confirm_ticks = self.create_entry(fr_micro, "盘口确认tick:", str(self.config.get('orderbook_confirm_ticks',3)))
+        self.ent_stop_confirm_sec = self.create_entry(fr_micro, "止损确认秒:", str(self.config.get('stop_confirm_window_sec',6)))
+        self.ent_mode_dwell_sec = self.create_entry(fr_micro, "模式驻留秒:", str(self.config.get('mode_min_dwell_sec',900)))
+        # ========== Tab4: 监控日志 ==========
+        tab4 = tk.Frame(nb, bg=BG)
+        nb.add(tab4, text=" 📈 监控日志 ")
+
+        # 日志区
+        log_top = tk.Frame(tab4, bg=BG)
+        log_top.pack(fill="x", padx=4, pady=(4,0))
         self.var_log_autoscroll = tk.BooleanVar(value=True)
-        tk.Checkbutton(
-            right_top,
-            text="日志自动滚动",
-            variable=self.var_log_autoscroll,
-            bg=self.colors["bg"],
-            fg=self.colors["fg"],
-            selectcolor=self.colors["panel"],
-            activebackground=self.colors["bg"]
-        ).pack(side="left", padx=4)
+        tk.Checkbutton(log_top, text="自动滚动", variable=self.var_log_autoscroll, bg=BG, fg=FG, selectcolor=PANEL, activebackground=BG).pack(side="left", padx=4)
 
-        hold_frame = ttk.LabelFrame(right, text="已开仓持币信息")
-        hold_frame.pack(side="bottom", fill="x", pady=(6, 0))
-        self.tree_holdings = ttk.Treeview(
-            hold_frame,
-            columns=("symbol", "status", "qty", "entry", "mark", "pnl", "roe", "mode"),
-            show="headings",
-            height=8
-        )
+        self.txt_log = scrolledtext.ScrolledText(tab4, bg=PANEL, fg=FG, font=("Consolas", 10), borderwidth=0, highlightthickness=1, highlightbackground=BG)
+        self.txt_log.pack(fill="both", expand=True, padx=4, pady=4)
+        self.txt_log.tag_config("ERROR", foreground=DANGER)
+        self.txt_log.tag_config("INFO", foreground=SUCCESS)
+        self.txt_log.tag_config("WARNING", foreground=WARNING)
+
+        # 持仓面板
+        hold_frame = ttk.LabelFrame(tab4, text="实时持仓")
+        hold_frame.pack(fill="x", padx=4, pady=(0,4))
+        self.tree_holdings = ttk.Treeview(hold_frame, columns=("symbol","status","qty","entry","mark","pnl","roe","mode"), show="headings", height=6)
         self.tree_holdings.heading("symbol", text="币种")
         self.tree_holdings.heading("status", text="持仓")
         self.tree_holdings.heading("qty", text="数量")
@@ -6903,57 +6944,38 @@ class BotGUI:
         self.tree_holdings.heading("pnl", text="未实现盈亏")
         self.tree_holdings.heading("roe", text="收益率")
         self.tree_holdings.heading("mode", text="模式")
-        self.tree_holdings.column("symbol", width=130, anchor="w")
-        self.tree_holdings.column("status", width=68, anchor="center")
-        self.tree_holdings.column("qty", width=72, anchor="e")
+        self.tree_holdings.column("symbol", width=120, anchor="w")
+        self.tree_holdings.column("status", width=60, anchor="center")
+        self.tree_holdings.column("qty", width=70, anchor="e")
         self.tree_holdings.column("entry", width=90, anchor="e")
         self.tree_holdings.column("mark", width=90, anchor="e")
-        self.tree_holdings.column("pnl", width=96, anchor="e")
+        self.tree_holdings.column("pnl", width=90, anchor="e")
         self.tree_holdings.column("roe", width=70, anchor="e")
-        self.tree_holdings.column("mode", width=68, anchor="center")
+        self.tree_holdings.column("mode", width=60, anchor="center")
         self.tree_holdings.pack(fill="x", padx=4, pady=4)
-        self.lbl_holdings_summary = tk.Label(
-            hold_frame,
-            text="汇总: 持仓币种 0 | 总数量 0.0000 | 总未实现盈亏 +0.0000U | 总保证金 0.0000U | 加权收益率 +0.00%",
-            anchor="w",
-            bg=self.colors["bg"],
-            fg=self.colors["fg"]
-        )
-        self.lbl_holdings_summary.pack(fill="x", padx=6, pady=(0, 4))
+        self.lbl_holdings_summary = tk.Label(hold_frame, text="汇总: 持仓币种 0 | 总未实现盈亏 +0.0000U", anchor="w", bg=BG, fg=FG)
+        self.lbl_holdings_summary.pack(fill="x", padx=6, pady=(0,4))
 
-        self.txt_log = scrolledtext.ScrolledText(
-            right, 
-            bg=self.colors["panel"], 
-            fg=self.colors["fg"], 
-            font=("Consolas", 10),
-            borderwidth=0,
-            highlightthickness=1,
-            highlightbackground=self.colors["bg"]
-        )
-        self.txt_log.pack(fill="both", expand=True, pady=(4, 0))
-        self.txt_log.tag_config("ERROR", foreground=self.colors["danger"])
-        self.txt_log.tag_config("INFO", foreground=self.colors["success"])
-        self.txt_log.tag_config("WARNING", foreground=self.colors["warning"])
-
-    def toggle_tune_panel(self, force=False):
-        if not hasattr(self, "tune_body") or not hasattr(self, "var_tune_expand"):
-            return
-        if not force:
-            self.var_tune_expand.set(not bool(self.var_tune_expand.get()))
-        expanded = bool(self.var_tune_expand.get())
-        if expanded:
-            self.tune_body.pack(fill="x", padx=0, pady=(2, 2))
-            if hasattr(self, "btn_tune_toggle"):
-                self.btn_tune_toggle.configure(text="收起调参")
-            # 自动调整 Canvas 的滚动区域
-            if hasattr(self, "left_canvas"):
-                self.root.after(50, lambda: self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all")))
+    def _gui_refresh_pool(self):
+        """GUI按钮：手动刷新智能币种池"""
+        if hasattr(self, 'smart_pool') and self.smart_pool:
+            self.log("手动刷新智能币种池...", "INFO")
+            try:
+                new_symbols = self.smart_pool.refresh(force=True)
+                if new_symbols:
+                    self.available_symbols = new_symbols
+                    self.config['symbol_pool'] = new_symbols
+                    if not self.config.get('symbols'):
+                        self.config['symbols'] = new_symbols
+                    self.refresh_symbol_checkboxes()
+                    self.lbl_smart_pool_count.config(text=f"{len(new_symbols)} 个币种")
+                    self.log(f"刷新成功：{len(new_symbols)} 个币种", "INFO")
+                else:
+                    self.log("刷新失败，保持当前列表", "WARNING")
+            except Exception as e:
+                self.log(f"刷新异常: {e}", "ERROR")
         else:
-            self.tune_body.pack_forget()
-            if hasattr(self, "btn_tune_toggle"):
-                self.btn_tune_toggle.configure(text="展开调参")
-            if hasattr(self, "left_canvas"):
-                self.root.after(50, lambda: self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all")))
+            self.log("引擎未启动，无法刷新。请先启动引擎。", "WARNING")
 
     def create_entry(self, parent, label, value, show=None):
         f = tk.Frame(parent, bg=self.colors["bg"])
@@ -7065,9 +7087,6 @@ class BotGUI:
             'furious': '狂暴'
         }.get(preset, '均衡')
         self.log(f"已应用[{preset_name}]参数预设，点击启动后生效", "INFO")
-
-    def on_symbol_mousewheel(self, event):
-        pass
 
     def _refresh_symbol_manager_listbox(self):
         if not hasattr(self, "sym_mgr_listbox"):
