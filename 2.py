@@ -262,6 +262,9 @@ DEFAULT_CONFIG = {
     "adaptive_entry_limit_timeout_sec": 300,
     "adaptive_entry_split_parts": 3,
     "adaptive_entry_candle_confirm_bars": 2,
+    "execution_degraded": False,
+    "max_stale_orders": 5,
+    "stale_order_cancel_sec": 600,
 }
 
 CONFIG_FILE = "grid_ultimate_config.json"
@@ -633,7 +636,7 @@ class GateTickerStream(threading.Thread):
             try:
                 self.log(msg, level)
             except Exception:
-                pass
+                pass  # silent fallback
 
     def _send_subscribe(self, ws):
         payload = {
@@ -667,7 +670,7 @@ class GateTickerStream(threading.Thread):
                         if self.ws_app is not None:
                             self.ws_app.close()
                     except Exception:
-                        pass
+                        pass  # silent fallback
                 return
             if data.get("channel") != self.ws_channel:
                 return
@@ -695,7 +698,7 @@ class GateTickerStream(threading.Thread):
                 if self.ws_app is not None:
                     self.ws_app.close()
             except Exception:
-                pass
+                pass  # silent fallback
             return
         self._safe_log(f"WS错误({self.symbol}): {error}")
 
@@ -742,7 +745,7 @@ class GateTickerStream(threading.Thread):
             if self.ws_app is not None:
                 self.ws_app.close()
         except Exception:
-            pass
+            pass  # silent fallback
 
 # ==================== 第1层：多时间框架市场监控 ====================
 class MarketMonitor(threading.Thread):
@@ -895,7 +898,7 @@ class SmartSymbolPool:
             try:
                 self.log(f"【智能币种池】{msg}", level)
             except Exception:
-                pass
+                pass  # silent fallback
 
     def refresh(self, force=False):
         """刷新币种池，返回最新的币种列表"""
@@ -1027,7 +1030,7 @@ class AdaptiveEntryEngine:
             try:
                 self.log(f"【自适应入场】{msg}", level)
             except Exception:
-                pass
+                pass  # silent fallback
 
     def select_mode(self, market_state, confidence, atr_ratio, volatility_ratio, order_imbalance):
         """
@@ -1301,7 +1304,7 @@ class SmartStopLoss:
             with open(db_path, "w") as f:
                 json.dump(self.positions, f)
         except Exception:
-            pass
+            pass  # silent fallback
 
     def _load_state(self):
         try:
@@ -1310,7 +1313,7 @@ class SmartStopLoss:
                 with open(db_path, "r") as f:
                     self.positions = json.load(f)
         except Exception:
-            pass
+            pass  # silent fallback
 
     def add_position(self, symbol, entry_price, atr, side, tp_multiplier):
         if symbol not in self.positions:
@@ -1347,7 +1350,7 @@ class SmartStopLoss:
                     remain.append(p)
                 self.positions[symbol] = remain
             except Exception:
-                pass
+                pass  # silent fallback
         if (not removed) and self.positions.get(symbol):
             try:
                 self.positions[symbol].pop(0)
@@ -1593,7 +1596,7 @@ class SentimentIndicator:
                     self.last_update = now
                     return self.value
         except Exception:
-            pass
+            pass  # silent fallback
             
         # 如果 API 失败，添加微小的随机游走以防止信号完全卡死
         self.value += random.uniform(-0.05, 0.05)
@@ -1642,7 +1645,7 @@ class FundingRatePredictor:
                 return
             self.history.append(rate)
         except Exception:
-            pass
+            pass  # silent fallback
 
     def predict_next(self):
         if len(self.history) < 3:
@@ -2287,7 +2290,7 @@ class ArbitrageDetector:
                 ticker = api_call(ex.fetch_ticker, self.symbol)
                 prices.append(ticker['last'])
             except:
-                pass
+                pass  # silent fallback
         if len(prices) < 2:
             return None
         max_price = max(prices)
@@ -2325,7 +2328,7 @@ class AutoTuner(threading.Thread):
                         self.optimal_params[sym] = result
                         self.log(f"【第14层】{sym} 调优结果: {result}", "INFO")
                 except:
-                    pass
+                    pass  # silent fallback
 
     def stop(self):
         self.running = False
@@ -2773,7 +2776,7 @@ class EvolutionEngine(threading.Thread):
             probe["causal_effects"].append(float(d.get("causal_effect", 0.0)))
             probe["causal_uncertainties"].append(float(d.get("causal_uncertainty", 0.5)))
         except Exception:
-            pass
+            pass  # silent fallback
         leverage = max(1.0, min(10.0, self._safe_float(params.get("leverage", 3), 3)))
         lev_scale = self._safe_float(decision.get("lev_scale", params.get("lev_scale", 1.0)), 1.0)
         sl_mult = max(0.8, self._safe_float(decision.get("sl_mult", params.get("sl_mult", 1.7)), 1.7))
@@ -2944,7 +2947,7 @@ class EvolutionEngine(threading.Thread):
                 try:
                     os.remove(os.path.join(self.backup_dir, stale))
                 except:
-                    pass
+                    pass  # silent fallback
         return path
 
     def _load_latest_backup(self):
@@ -3292,7 +3295,7 @@ class PhysicalGridManager:
                     decimals = len(str(step).rstrip('0').split('.')[-1])
                     qty = round(qty, decimals)
             except Exception:
-                pass
+                pass  # silent fallback
         if qty < min_amount or qty <= 0:
             return 0.0
         return float(qty)
@@ -3330,7 +3333,7 @@ class PhysicalGridManager:
             try:
                 api_call(self.exchange.cancel_order, order_id, self.symbol)
             except Exception:
-                pass
+                pass  # silent fallback
         self.active_grids.clear()
         self._save_state()
         self.log_msg("【物理网格】所有网格挂单已撤销")
@@ -4084,7 +4087,7 @@ class UltimateGridStrategy(threading.Thread):
                 self.orderbook_cache = ob
                 self.orderbook_cache_ts = now
         except Exception:
-            pass
+            pass  # silent fallback
         if self.orderbook_cache is None:
             bids = [[self.latest_ws_bid, 0.0]] if self.latest_ws_bid > 0 else []
             asks = [[self.latest_ws_ask, 0.0]] if self.latest_ws_ask > 0 else []
@@ -4480,7 +4483,7 @@ class UltimateGridStrategy(threading.Thread):
             try:
                 self.log_msg("WS已关闭，使用REST行情")
             except Exception:
-                pass
+                pass  # silent fallback
         try:
             self.update_position_status(force=True)
             if self.has_position:
@@ -5075,7 +5078,7 @@ class UltimateGridStrategy(threading.Thread):
                             p_notional = p_qty * p_price * (p_contract_size if is_contract_p and p_contract_size > 0 else 1.0)
                             pending_notional += (p_notional / max(1e-8, leverage))
                     except:
-                        pass
+                        pass  # silent fallback
             total_exposure = max(0.0, float(self.position_margin)) + max(0.0, float(pending_notional))
             if total_exposure >= max_margin_per_symbol * 0.95:
                 now_ts = time.time()
@@ -5297,7 +5300,7 @@ class UltimateGridStrategy(threading.Thread):
                 if asks and len(asks[0]) > 0:
                     best_ask = float(asks[0][0])
             except Exception:
-                pass
+                pass  # silent fallback
 
             # ==================== 自适应入场引擎接入 ====================
             atr_ratio_for_entry = self.cached_atr / price if price > 0 and self.cached_atr > 0 else 0.02
@@ -5573,7 +5576,7 @@ class UltimateGridStrategy(threading.Thread):
             self.margin_used_cache = max(0.0, float(used))
             self.margin_used_cache_ts = now
         except Exception:
-            pass
+            pass  # silent fallback
         return max(0.0, float(self.margin_used_cache))
 
     def resolve_style(self, state, atr, price, volume_ratio, var_value, funding_pred, corr_penalty):
@@ -5679,7 +5682,7 @@ class UltimateGridStrategy(threading.Thread):
                             self.entry_slippage_history.append(eslip)
                             self.slippage_history.append(eslip)
                     except Exception:
-                        pass
+                        pass  # silent fallback
                     try:
                         cooldown = int(self.config.get('fill_reentry_cooldown_sec', 1800))
                     except Exception:
@@ -5711,7 +5714,7 @@ class UltimateGridStrategy(threading.Thread):
                                     if isinstance(post, dict):
                                         amount = float(post.get("remaining", amount) or amount)
                                 except Exception:
-                                    pass
+                                    pass  # silent fallback
                             if side in ("buy", "sell") and amount > 0 and cancelled:
                                 self.place_market_order(side, amount, reason="timeout_convert", decision=decision)
                         if cancelled:
@@ -5796,7 +5799,7 @@ class UltimateGridStrategy(threading.Thread):
                         try:
                             api_call(self.exchange.cancel_order, o['id'], self.symbol)
                         except:
-                            pass
+                            pass  # silent fallback
         except Exception as e:
             self.log_msg(f"定期对账异常: {e}", "WARNING")
 
@@ -5918,7 +5921,7 @@ class UltimateGridStrategy(threading.Thread):
                         pnl_quote -= abs(notional_entry) * fee_rate
                         self._record_realized_pnl(float(pnl_quote))
                     except Exception:
-                        pass
+                        pass  # silent fallback
                     ep = float(pos.get('entryPrice', pos.get('entry_price', 0)) or 0)
                     self.stop_loss.remove_position(self.symbol, entry_price=ep, side='buy' if side_pos == 'long' else 'sell')
                 except Exception as e:
@@ -5976,7 +5979,7 @@ class UltimateGridStrategy(threading.Thread):
                         self.config['leverage'] = int(max(1, min(10, lv)))
                     break
         except Exception:
-            pass
+            pass  # silent fallback
         try:
             has_margin_mode = False
             has_map = getattr(self.exchange, "has", {})
@@ -6034,7 +6037,7 @@ class UltimateGridStrategy(threading.Thread):
                 if self.ws_stream.is_alive():
                     self.ws_stream.join(timeout=2)
         except Exception:
-            pass
+            pass  # silent fallback
         try:
             api_call(self.exchange.cancel_all_orders, self.symbol)
         except Exception as e:
@@ -6262,7 +6265,7 @@ class BotGUI:
             self._blank_icon = tk.PhotoImage(width=1, height=1)
             self.root.iconphoto(True, self._blank_icon)
         except:
-            pass
+            pass  # silent fallback
         self.load_config()
         self.setup_ui()
         self.running = False
@@ -7342,7 +7345,7 @@ class BotGUI:
                     if st.get("slippage_mean", 0) > 0:
                         total_slip.append(float(st.get("slippage_mean", 0)))
                 except Exception:
-                    pass
+                    pass  # silent fallback
             slip_avg = float(np.mean(total_slip)) if total_slip else 0.0
             report_path = os.path.join("reports", f"daily_report_{day_key}.txt")
             with self.health_lock:
@@ -7702,11 +7705,11 @@ class BotGUI:
             try:
                 total_qty += abs(float(r[2]))
             except Exception:
-                pass
+                pass  # silent fallback
             try:
                 total_pnl += float(str(r[5]).replace("U", ""))
             except Exception:
-                pass
+                pass  # silent fallback
             key = _norm_symbol(r[0])
             m = metrics_map.get(key, {})
             margin = float(m.get("margin", 0) or 0)
