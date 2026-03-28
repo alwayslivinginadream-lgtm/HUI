@@ -32,8 +32,8 @@ except Exception:
 DEFAULT_CONFIG = {
     "api_key": "",
     "api_secret": "",
-    "margin_usdt": 10.0,                # 总仓位额度（所有选中币种共享）
-    "leverage": 3,                       # 基础杠杆
+    "margin_usdt": 100.0,                # 总仓位额度（所有选中币种共享）
+    "leverage": 4,                       # 基础杠杆
     "margin_mode": "isolated",            # 逐仓
     "grid_count": 10,                     # 网格数量
     "base_grid_range": 0.02,              # 基础网格区间 ±2%
@@ -6801,19 +6801,11 @@ class BotGUI:
         self.ent_evo_mut = self.create_entry(fr_evo, "变异率:", str(self.config.get('evolution_mutation_rate',0.18)))
         self.ent_evo_interval = self.create_entry(fr_evo, "进化间隔(h):", str(self.config.get('evolution_interval_hours',24)))
 
-        # 币种选择
-        self.fr_sym = ttk.LabelFrame(t1_inner, text=f"币种选择 ({len(self.available_symbols)}个)")
-        self.fr_sym.pack(fill="x", pady=5, padx=8)
-        sym_ops = tk.Frame(self.fr_sym, bg=BG)
-        sym_ops.pack(fill="x", padx=5, pady=4)
-        self.ent_symbol_input = ttk.Entry(sym_ops)
-        self.ent_symbol_input.pack(side="left", fill="x", expand=True, padx=(0,4))
-        ttk.Button(sym_ops, text="添加", command=self.add_symbol).pack(side="left", padx=2)
-        ttk.Button(sym_ops, text="删除", command=self.delete_symbol).pack(side="left", padx=2)
-        ttk.Button(sym_ops, text="币种管理", command=self.open_symbol_manager).pack(side="left", padx=2)
+        # 币种选择（隐藏，由智能池自动管理）
+        self.fr_sym = tk.Frame(t1_inner, bg=BG)  # 隐藏的容器，不pack
         self.sym_list_frame = tk.Frame(self.fr_sym, bg=BG)
-        self.sym_list_frame.pack(fill="x", padx=5, pady=5)
         self.sym_vars = {}
+        self.ent_symbol_input = ttk.Entry(self.fr_sym)  # 保留引用防报错
         self.refresh_symbol_checkboxes()
         # ========== Tab2: 智能引擎 ==========
         tab2 = tk.Frame(nb, bg=BG)
