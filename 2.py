@@ -7182,6 +7182,18 @@ class BotGUI:
         self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
         self.log("系统已停止", "ERROR")
 
+    def _get_ssl_context(self):
+        """获取SSL上下文，兼容证书问题"""
+        import ssl
+        try:
+            import certifi
+            return ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+
     def _auto_update(self):
         """一键从GitHub下载最新版本并重启"""
         import urllib.request
@@ -7194,7 +7206,7 @@ class BotGUI:
 
                 # 下载最新代码
                 req = urllib.request.Request(REPO_URL, headers={"Cache-Control": "no-cache"})
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=30, context=self._get_ssl_context()) as resp:
                     new_code = resp.read()
 
                 if len(new_code) < 1000:
@@ -7298,7 +7310,7 @@ class BotGUI:
                 req.add_header("Content-Type", "application/json")
                 req.add_header("Accept", "application/vnd.github.v3+json")
 
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=30, context=self._get_ssl_context()) as resp:
                     result = json.loads(resp.read().decode("utf-8"))
 
                 if result.get("content", {}).get("name"):
