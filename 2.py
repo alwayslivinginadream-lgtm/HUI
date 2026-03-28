@@ -7,7 +7,7 @@ import time
 import threading
 import traceback
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox, simpledialog
 from datetime import datetime, timedelta
 from enum import Enum
 import ccxt
@@ -6497,6 +6497,8 @@ class BotGUI:
         self.btn_stop["state"] = "disabled"
         self.btn_update = ttk.Button(cmd_bar, text="🔄 一键更新", command=self._auto_update)
         self.btn_update.pack(side="right", padx=6, ipady=4)
+        self.btn_upload_log = ttk.Button(cmd_bar, text="📤 上传日志", command=self._upload_log)
+        self.btn_upload_log.pack(side="right", padx=6, ipady=4)
         self.lbl_version = tk.Label(cmd_bar, text="", bg=BG, fg="#7a7ea0", font=("Consolas", 8))
         self.lbl_version.pack(side="right", padx=4)
         tk.Frame(self.root, bg=BORDER, height=1).pack(fill="x")
@@ -7250,6 +7252,67 @@ class BotGUI:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception:
             pass
+
+    def _upload_log(self):
+        """一键上传日志到GitHub"""
+        import urllib.request
+        # token从配置文件读取
+        token = self.config.get("github_token", "")
+        if not token:
+            # 弹窗让用户输入
+            token = tk.simpledialog.askstring("GitHub Token", "请输入GitHub Token:", show="*")
+            if not token:
+                self.log("❌ 未输入Token，取消上传", "WARNING")
+                return
+            self.config["github_token"] = token
+            self.save_config()
+        REPO = "alwayslivinginadream-lgtm/HUI"
+
+        def _do_upload():
+            try:
+                self.log("📤 正在上传日志...", "INFO")
+                self.btn_upload_log.config(state="disabled", text="⏳ 上传中...")
+
+                # 获取日志内容
+                log_content = self.txt_log.get("1.0", tk.END).strip()
+                if not log_content or len(log_content) < 50:
+                    self.log("❌ 日志内容太少，不上传", "WARNING")
+                    self.root.after(0, lambda: self.btn_upload_log.config(state="normal", text="📤 上传日志"))
+                    return
+
+                # 文件名：log_日期时间.txt
+                import base64
+                ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+                filename = f"log_{ts}.txt"
+                content_b64 = base64.b64encode(log_content.encode("utf-8")).decode("utf-8")
+
+                # GitHub API 创建文件
+                url = f"https://api.github.com/repos/{REPO}/contents/{filename}"
+                payload = json.dumps({
+                    "message": f"上传日志 {filename}",
+                    "content": content_b64
+                }).encode("utf-8")
+
+                req = urllib.request.Request(url, data=payload, method="PUT")
+                req.add_header("Authorization", f"token {token}")
+                req.add_header("Content-Type", "application/json")
+                req.add_header("Accept", "application/vnd.github.v3+json")
+
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+
+                if result.get("content", {}).get("name"):
+                    self.log(f"✅ 日志上传成功: {filename} ({len(log_content)} bytes)", "INFO")
+                    self.root.after(0, lambda: messagebox.showinfo("上传成功", f"日志已上传到GitHub:\n{filename}"))
+                else:
+                    self.log("❌ 上传返回异常", "ERROR")
+
+            except Exception as e:
+                self.log(f"❌ 日志上传失败: {e}", "ERROR")
+            finally:
+                self.root.after(0, lambda: self.btn_upload_log.config(state="normal", text="📤 上传日志"))
+
+        threading.Thread(target=_do_upload, daemon=True).start()
 
     def run_backend(self):
         try:
