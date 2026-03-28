@@ -7558,16 +7558,17 @@ class BotGUI:
                         if not python_cmd:
                             raise FileNotFoundError("未找到python解释器")
                         self.log(f"🔧 使用Python: {python_cmd}", "INFO")
-                        # 先确保pyinstaller已安装
-                        subprocess.run([python_cmd, "-m", "pip", "install", "--quiet", "pyinstaller"],
-                                       capture_output=True, text=True, timeout=120)
-                        # 调用pyinstaller打包
+                        # 用bat脚本打包（确保环境变量与手动打包一致）
+                        build_bat = os.path.join(update_dir, "_build.bat")
+                        with open(build_bat, "w", encoding="utf-8") as bat:
+                            bat.write(f'@echo off\n')
+                            bat.write(f'cd /d "{update_dir}"\n')
+                            bat.write(f'"{python_cmd}" -m pip install --quiet pyinstaller pysocks 2>nul\n')
+                            bat.write(f'"{python_cmd}" -m PyInstaller --onefile --windowed --name {exe_name} --hidden-import pysocks --hidden-import socks "{py_file}"\n')
+                        self.log("📦 正在执行打包脚本...", "INFO")
                         result = subprocess.run(
-                            [python_cmd, "-m", "PyInstaller",
-                             "--onefile", "--windowed", "--name", exe_name,
-                             "--hidden-import", "pysocks", "--hidden-import", "socks",
-                             py_file],
-                            cwd=update_dir, capture_output=True, text=True, timeout=180
+                            ["cmd", "/c", build_bat],
+                            capture_output=True, text=True, timeout=300
                         )
                         dist_exe = os.path.join(update_dir, "dist", f"{exe_name}.exe")
                         if os.path.exists(dist_exe):
