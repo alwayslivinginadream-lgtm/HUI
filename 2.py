@@ -4577,7 +4577,7 @@ class UltimateGridStrategy(threading.Thread):
                     self.log_msg(f"触发反诱饵暂停，暂缓开单 {remain}s", "WARNING")
                 self.maybe_switch_mode(crowding_score)
                 if self._anti_hunt_gate(crowding_score, order_imbalance):
-                    self.check_filled_orders(buy_prob, optimal_range, dynamic_leverage, self.latest_decision or {})
+                    self.check_filled_orders(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, self.latest_decision or {})
                     self.reconcile_orders()
                     time.sleep(2)
                     continue
@@ -4653,13 +4653,13 @@ class UltimateGridStrategy(threading.Thread):
                         time.sleep(1)
                         continue
                 if self._apply_slot_pressure_policy(decision, price, atr):
-                    self.check_filled_orders(buy_prob, optimal_range, dynamic_leverage, decision)
+                    self.check_filled_orders(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, decision)
                     self.reconcile_orders()
                     time.sleep(1.2)
                     continue
                 if self.suspicious_pause_until > time.time():
                     self.log_msg("反诱饵暂停窗口内，跳过本轮开仓请求", "WARNING")
-                    self.check_filled_orders(buy_prob, optimal_range, dynamic_leverage, decision)
+                    self.check_filled_orders(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, decision)
                     self.reconcile_orders()
                     time.sleep(2)
                     continue
@@ -4678,7 +4678,7 @@ class UltimateGridStrategy(threading.Thread):
 
                 if order_token:
                     # 直接下单（网格已移除）
-                    placed = self.place_one_order(buy_prob, optimal_range, dynamic_leverage, decision)
+                    placed = self.place_one_order(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, decision)
                     if placed:
                         self.scheduler.confirm_order(order_token, self.symbol, self.config.get('scheduler_interval_jitter', 0.2))
                     else:
@@ -4702,7 +4702,7 @@ class UltimateGridStrategy(threading.Thread):
                 self._record_causal_decision(decision, metrics, placed, price, buy_prob)
 
                 # 检查成交
-                self.check_filled_orders(buy_prob, optimal_range, dynamic_leverage, decision)
+                self.check_filled_orders(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, decision)
                 self.reconcile_orders()
 
                 # 检查止损
