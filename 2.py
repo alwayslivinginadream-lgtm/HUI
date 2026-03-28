@@ -7,7 +7,7 @@ import time
 import threading
 import traceback
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
 from datetime import datetime, timedelta
 from enum import Enum
 import ccxt
