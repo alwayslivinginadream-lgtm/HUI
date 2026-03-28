@@ -7524,8 +7524,56 @@ class BotGUI:
                 self.log(f"💾 旧版备份: {backup_file}", "INFO")
 
                 if getattr(sys, 'frozen', False):
-                    self.log("⚠️ exe模式：请重新打包exe或直接用 python 2.py 运行新版本", "WARNING")
-                    self.root.after(0, lambda: messagebox.showinfo("更新完成", f"新版本已下载到:\n{target_file}\n\n请重新打包exe或用python 2.py运行"))
+                    # exe模式：下载2.py后自动打包成新exe
+                    self.log("📦 正在自动打包exe...", "INFO")
+                    update_dir = os.path.dirname(current_file)
+                    py_file = os.path.join(update_dir, "2.py")
+                    exe_name = os.path.splitext(os.path.basename(current_file))[0]
+                    try:
+                        import subprocess
+                        # 备份旧exe
+                        exe_bak = current_file + ".bak"
+                        try:
+                            if os.path.exists(exe_bak):
+                                os.remove(exe_bak)
+                            import shutil
+                            shutil.copy2(current_file, exe_bak)
+                        except Exception:
+                            pass
+                        # 调用pyinstaller打包
+                        result = subprocess.run(
+                            [sys.executable.replace("PhoenixQ.exe", "python.exe"), "-m", "PyInstaller",
+                             "--onefile", "--windowed", "--name", exe_name, py_file],
+                            cwd=update_dir, capture_output=True, text=True, timeout=120
+                        )
+                        dist_exe = os.path.join(update_dir, "dist", f"{exe_name}.exe")
+                        if os.path.exists(dist_exe):
+                            # 把新exe复制到原位置（当前exe在运行中无法直接覆盖）
+                            new_exe_path = current_file + ".new"
+                            shutil.copy2(dist_exe, new_exe_path)
+                            # 写一个bat脚本：等当前exe退出后替换
+                            bat_path = os.path.join(update_dir, "_update.bat")
+                            with open(bat_path, "w") as bat:
+                                bat.write(f'@echo off\n')
+                                bat.write(f'ping 127.0.0.1 -n 3 >nul\n')
+                                bat.write(f'move /Y "{new_exe_path}" "{current_file}"\n')
+                                bat.write(f'start "" "{current_file}"\n')
+                                bat.write(f'del "%~f0"\n')
+                            self.log("✅ 打包成功！即将重启...", "INFO")
+                            self.root.after(0, lambda: messagebox.showinfo("更新完成", "新版本打包成功，即将自动重启"))
+                            # 启动bat并退出当前程序
+                            subprocess.Popen(["cmd", "/c", bat_path], cwd=update_dir)
+                            self.root.after(1000, lambda: os._exit(0))
+                        else:
+                            self.log(f"❌ 打包失败，请手动运行: pyinstaller --onefile --windowed --name {exe_name} 2.py", "ERROR")
+                            self.log(f"pyinstaller输出: {result.stderr[-200:] if result.stderr else '无'}", "WARNING")
+                            self.root.after(0, lambda: messagebox.showwarning("打包失败", f"自动打包失败，请手动打包\n或直接用 python 2.py 运行"))
+                    except FileNotFoundError:
+                        self.log("❌ 未找到python/pyinstaller，请先安装", "ERROR")
+                        self.root.after(0, lambda: messagebox.showwarning("打包失败", "未找到python或pyinstaller\n请手动打包或用 python 2.py 运行"))
+                    except Exception as e2:
+                        self.log(f"❌ 自动打包异常: {e2}", "ERROR")
+                        self.root.after(0, lambda: messagebox.showwarning("打包失败", f"自动打包异常: {e2}\n请手动打包或用 python 2.py 运行"))
                 else:
                     self.log("🔄 即将重启...", "INFO")
                     self.root.after(0, lambda: messagebox.showinfo("更新完成", "即将重启应用"))
