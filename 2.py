@@ -7598,15 +7598,17 @@ class BotGUI:
         """一键上传日志到GitHub"""
         import urllib.request
         # token从配置文件读取
-        token = self.config.get("github_token", "")
+        token = self.config.get("github_token", "").strip()
         if not token:
             # 弹窗让用户输入
             token = tk.simpledialog.askstring("GitHub Token", "请输入GitHub Token:", show="*")
             if not token:
                 self.log("❌ 未输入Token，取消上传", "WARNING")
                 return
-            self.config["github_token"] = token
+            self.config["github_token"] = token.strip()
             self.save_config()
+        # 确保token是纯ASCII
+        token = token.encode("ascii", errors="ignore").decode("ascii")
         REPO = "alwayslivinginadream-lgtm/HUI"
 
         def _do_upload():
@@ -7632,7 +7634,7 @@ class BotGUI:
                 payload = json.dumps({
                     "message": f"上传日志 {filename}",
                     "content": content_b64
-                }).encode("utf-8")
+                }, ensure_ascii=True).encode("utf-8")
 
                 req = urllib.request.Request(url, data=payload, method="PUT")
                 req.add_header("Authorization", f"token {token}")
