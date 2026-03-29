@@ -6186,10 +6186,24 @@ class BotGUI:
         self.daily_report_retry_ts = 0
 
     def load_config(self):
-        global API_RUNTIME_SETTINGS
-        if os.path.exists(CONFIG_FILE):
+        global API_RUNTIME_SETTINGS, CONFIG_FILE
+        # 多路径搜索配置文件
+        candidates = [CONFIG_FILE]
+        if getattr(sys, 'frozen', False):
+            candidates.append(os.path.join(os.path.dirname(sys.executable), "phoenixq_config.json"))
+        candidates.append(os.path.join(os.getcwd(), "phoenixq_config.json"))
+        candidates.append(os.path.join(os.path.expanduser("~"), "Desktop", "phoenixq_config.json"))
+        
+        found_path = None
+        for p in candidates:
+            if p and os.path.exists(p):
+                found_path = p
+                break
+        
+        if found_path:
+            CONFIG_FILE = found_path  # 更新全局路径，确保save也写到同一个文件
             try:
-                with open(CONFIG_FILE, 'r') as f:
+                with open(found_path, 'r') as f:
                     loaded = json.load(f)
                     self.config = DEFAULT_CONFIG.copy()
                     self.config.update(loaded)
