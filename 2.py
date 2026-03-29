@@ -260,6 +260,8 @@ DEFAULT_CONFIG = {
     "adaptive_entry_mab_alpha": 0.15,
     "adaptive_entry_pullback_atr_mult": 0.5,
     "adaptive_entry_limit_timeout_sec": 120,
+    "sr_direction_filter": true,
+    "sr_zone_pct": 0.25,
     "adaptive_entry_split_parts": 3,
     "adaptive_entry_candle_confirm_bars": 2,
     "execution_degraded": False,
@@ -2368,6 +2370,30 @@ class CausalDecisionEngine:
             return decision
         if opportunity_score < profile["min_score"]:
             decision["reason"] = "机会分不足"
+            return decision
+        # ====== 支撑/阻力方向过滤 ======
+        # 价格贴近支撑区不做空，贴近压力区不做多
+        sr_filter_enabled = bool(self.config.get("sr_direction_filter", True))
+        sr_blocked = False
+        if sr_filter_enabled and atr_ratio > 0:
+            bb_upper = float(metrics.get("bb_upper", 0))
+            bb_lower = float(metrics.get("bb_lower", 0))
+            bb_mid = (bb_upper + bb_lower) / 2 if bb_upper > 0 and bb_lower > 0 else 0
+            current_price = float(metrics.get("current_price", 0))
+            if bb_upper > 0 and bb_lower > 0 and current_price > 0:
+                bb_range = bb_upper - bb_lower
+                if bb_range > 0:
+                    price_position = (current_price - bb_lower) / bb_range  # 0=下轨 1=上轨
+                    sr_zone = float(self.config.get("sr_zone_pct", 0.25))  # 上下25%为危险区
+                    if buy_prob >= dynamic_buy_open and price_position > (1 - sr_zone):
+                        # 价格在上轨附近，不做多
+                        decision["reason"] = f"压力位过滤(价位{price_position:.0%})"
+                        sr_blocked = True
+                    elif buy_prob <= dynamic_sell_open and price_position < sr_zone:
+                        # 价格在下轨附近，不做空
+                        decision["reason"] = f"支撑位过滤(价位{price_position:.0%})"
+                        sr_blocked = True
+        if sr_blocked:
             return decision
         if buy_prob >= dynamic_buy_open:
             decision["side"] = "buy"
@@ -4707,7 +4733,10 @@ class UltimateGridStrategy(threading.Thread):
                     "short_return": short_ret,
                     "causal_model_pause": bool(time.time() < self.causal_model_pause_until),
                     "ipw_warmup_window": int(self.ipw_warmup_window),
-                    "price_history_len": int(len(self.price_history))
+                    "price_history_len": int(len(self.price_history)),
+                    "bb_upper": getattr(self, 'cached_bb_upper', 0.0),
+                    "bb_lower": getattr(self, 'cached_bb_lower', 0.0),
+                    "current_price": price
                 }
                 try:
                     prop_features = np.array([
@@ -6144,7 +6173,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.1.7 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.1.8 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -6605,7 +6634,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.1.7 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.1.8 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
