@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     "tp_mult": 1.8,
     "trail_mult": 1.2,
     "max_holding_hours": 20,
-    "causal_enabled": True,
+    "causal_enabled": False,
     "causal_effect_threshold": -0.01,
     "causal_warmup_evals": 200,           # 冷启动：前200次评估跳过因果门控
     "causal_effect_threshold_base": 0.005,
@@ -2187,7 +2187,7 @@ class CausalDecisionEngine:
         opportunity_score = max(0.0, min(1.2, opportunity_score + phase_boost - crowding_penalty * 0.6))
         opportunity_score *= max(0.2, 1 - risk_penalty * 0.65)
         opportunity_score *= max(float(self.config.get("signal_lifespan_floor", 0.45)), signal_health)
-        causal_enabled = bool(self.config.get("causal_enabled", True))
+        causal_enabled = bool(self.config.get("causal_enabled", False))
         if bool(metrics.get("causal_model_pause", False)):
             causal_enabled = False
         causal_base = float(self.config.get("causal_effect_threshold", 0.015))
@@ -4084,7 +4084,7 @@ class UltimateGridStrategy(threading.Thread):
         ], dtype=float)
 
     def _record_causal_decision(self, decision, metrics, treatment, price, buy_prob):
-        if not bool(self.config.get("causal_enabled", True)):
+        if not bool(self.config.get("causal_enabled", False)):
             return
         try:
             base_fv = self._causal_feature_vector(decision, metrics)
@@ -4352,7 +4352,7 @@ class UltimateGridStrategy(threading.Thread):
         return False
 
     def _flush_causal_labels(self, current_price):
-        if not bool(self.config.get("causal_enabled", True)):
+        if not bool(self.config.get("causal_enabled", False)):
             return
         if current_price <= 0 or len(self.causal_pending) == 0:
             return
@@ -6751,7 +6751,7 @@ class BotGUI:
         fr_causal.pack(fill="x", pady=8, padx=8)
         causal_sw = tk.Frame(fr_causal, bg=BG)
         causal_sw.pack(fill="x", padx=5, pady=3)
-        self.var_causal_enabled = tk.BooleanVar(value=bool(self.config.get('causal_enabled', True)))
+        self.var_causal_enabled = tk.BooleanVar(value=bool(self.config.get('causal_enabled', False)))
         tk.Checkbutton(causal_sw, text="启用因果推理门控（关闭后跳过因果效应检查）", variable=self.var_causal_enabled, bg=BG, fg=FG, selectcolor="#0f1a30", activebackground=BG, font=("Consolas",9)).pack(side="left")
         causal_info = tk.Frame(fr_causal, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
         causal_info.pack(fill="x", padx=8, pady=5)
