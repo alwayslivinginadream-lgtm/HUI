@@ -7517,14 +7517,14 @@ class BotGUI:
                     self.root.after(0, lambda: self.btn_update.config(state="normal", text="🔄 一键更新"))
                     return
 
-                # 获取当前脚本路径
-                current_file = os.path.abspath(sys.argv[0])
-                # 如果是exe打包的，找到同目录下的2.py或自身
+                # 获取当前脚本/exe路径
                 if getattr(sys, 'frozen', False):
-                    # PyInstaller打包模式：更新同目录的2.py
+                    current_file = os.path.abspath(sys.executable)
                     update_dir = os.path.dirname(current_file)
                     target_file = os.path.join(update_dir, "2.py")
                 else:
+                    current_file = os.path.abspath(sys.argv[0])
+                    update_dir = os.path.dirname(current_file)
                     target_file = current_file
 
                 # 备份旧文件
