@@ -6202,7 +6202,7 @@ class BotGUI:
                 break
         
         # 启动日志：显示配置文件搜索结果
-        _config_debug = f"frozen={getattr(sys, 'frozen', False)}\nexe={sys.executable}\ncwd={os.getcwd()}\nCONFIG_FILE={CONFIG_FILE}\n找到={found_path or '未找到'}\n搜索={candidates}"
+        _config_debug = f"frozen={getattr(sys, 'frozen', False)}\nexe={sys.executable}\ncwd={os.getcwd()}\nCONFIG_FILE={CONFIG_FILE}\n找到={found_path or '未找到'}\napi_key={self.config.get('api_key','')[:6]}***\napi_secret={self.config.get('api_secret','')[:6]}***\nmargin={self.config.get('margin_usdt',0)}\n搜索={candidates}"
         try:
             print(f"[PhoenixQ] {_config_debug}")
         except:
