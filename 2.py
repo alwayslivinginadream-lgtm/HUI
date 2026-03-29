@@ -6202,11 +6202,18 @@ class BotGUI:
                 break
         
         # 启动日志：显示配置文件搜索结果
+        _config_debug = f"frozen={getattr(sys, 'frozen', False)}\nexe={sys.executable}\ncwd={os.getcwd()}\nCONFIG_FILE={CONFIG_FILE}\n找到={found_path or '未找到'}\n搜索={candidates}"
         try:
-            print(f"[PhoenixQ] 配置搜索: frozen={getattr(sys, 'frozen', False)} exe={sys.executable} cwd={os.getcwd()}")
-            print(f"[PhoenixQ] 配置路径: {found_path or '未找到'}")
+            print(f"[PhoenixQ] {_config_debug}")
         except:
             pass
+        # exe模式下弹窗显示（仅调试用，确认后删除）
+        if getattr(sys, 'frozen', False):
+            try:
+                import tkinter.messagebox as _mb
+                _mb.showinfo("PhoenixQ配置调试", _config_debug)
+            except:
+                pass
         if found_path:
             CONFIG_FILE = found_path  # 更新全局路径，确保save也写到同一个文件
             try:
