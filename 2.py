@@ -2351,9 +2351,11 @@ class CausalDecisionEngine:
                 exe["algo"] = "twap"
             exe["reason"] = f"{exe.get('reason','')}|因果降速:{causal_uncertainty:.3f}"
         decision["execution"] = exe
+        # 风险软约束：高风险时缩小仓位而非直接拒绝
         if risk_penalty > 0.82:
-            decision["reason"] = "风险过高"
-            return decision
+            risk_scale = max(0.25, 1.0 - (risk_penalty - 0.82) * 2.5)  # 0.82→1.0, 1.0→0.55, 封底0.25
+            decision["lev_scale"] = float(decision.get("lev_scale", 1.0)) * risk_scale
+            decision["risk_downscaled"] = True
         if cost_block_reason:
             decision["reason"] = cost_block_reason
             return decision
@@ -6139,7 +6141,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.1.5 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.1.6 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -6600,7 +6602,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.1.5 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.1.6 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
