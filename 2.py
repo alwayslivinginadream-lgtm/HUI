@@ -267,13 +267,10 @@ DEFAULT_CONFIG = {
     "stale_order_cancel_sec": 600,
 }
 
-# 配置文件路径：优先使用exe所在目录，其次脚本所在目录
 if getattr(sys, 'frozen', False):
-    # PyInstaller exe模式：用sys.executable获取exe真实路径
-    _app_dir = os.path.dirname(os.path.abspath(sys.executable))
+    CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "phoenixq_config.json")
 else:
-    _app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-CONFIG_FILE = os.path.join(_app_dir, "phoenixq_config.json")
+    CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "phoenixq_config.json")
 API_SEMAPHORE = threading.Semaphore(5)      # API并发限制
 API_RATE_LIMIT_LOCK = threading.Lock()
 API_RATE_LIMIT_UNTIL = 0.0
@@ -6186,38 +6183,10 @@ class BotGUI:
         self.daily_report_retry_ts = 0
 
     def load_config(self):
-        global API_RUNTIME_SETTINGS, CONFIG_FILE
-        # 多路径搜索配置文件
-        candidates = [CONFIG_FILE]
-        if getattr(sys, 'frozen', False):
-            candidates.append(os.path.join(os.path.dirname(sys.executable), "phoenixq_config.json"))
-        candidates.append(os.path.join(os.getcwd(), "phoenixq_config.json"))
-        candidates.append(os.path.join(os.path.expanduser("~"), "Desktop", "phoenixq_config.json"))
-        candidates.append(os.path.join(os.path.expanduser("~"), "Desktop", "HUI-main", "phoenixq_config.json"))
-        
-        found_path = None
-        for p in candidates:
-            if p and os.path.exists(p):
-                found_path = p
-                break
-        
-        # 启动日志：显示配置文件搜索结果
-        _config_debug = f"frozen={getattr(sys, 'frozen', False)}\nexe={sys.executable}\ncwd={os.getcwd()}\nCONFIG_FILE={CONFIG_FILE}\n找到={found_path or '未找到'}\napi_key={self.config.get('api_key','')[:6]}***\napi_secret={self.config.get('api_secret','')[:6]}***\nmargin={self.config.get('margin_usdt',0)}\n搜索={candidates}"
-        try:
-            print(f"[PhoenixQ] {_config_debug}")
-        except:
-            pass
-        # exe模式下弹窗显示（仅调试用，确认后删除）
-        if getattr(sys, 'frozen', False):
+        global API_RUNTIME_SETTINGS
+        if os.path.exists(CONFIG_FILE):
             try:
-                import tkinter.messagebox as _mb
-                _mb.showinfo("PhoenixQ配置调试", _config_debug)
-            except:
-                pass
-        if found_path:
-            CONFIG_FILE = found_path  # 更新全局路径，确保save也写到同一个文件
-            try:
-                with open(found_path, 'r') as f:
+                with open(CONFIG_FILE, 'r') as f:
                     loaded = json.load(f)
                     self.config = DEFAULT_CONFIG.copy()
                     self.config.update(loaded)
