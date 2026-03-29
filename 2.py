@@ -2929,7 +2929,10 @@ class EvolutionEngine(threading.Thread):
         ret = (price - last_price) / last_price
         probe["last_price"] = price
         probe["last_seen"] = time.time()
-        decision = self._compute_shadow_decision(params, ret, state, probe)
+        try:
+            decision = self._compute_shadow_decision(params, ret, state, probe)
+        except Exception:
+            decision = {"entry_allowed": False, "side": None, "reason": "shadow_error", "details": {}, "lev_scale": 1.0, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2}
         try:
             d = decision.get("details", {})
             probe["causal_effects"].append(float(d.get("causal_effect", 0.0)))
