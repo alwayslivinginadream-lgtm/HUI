@@ -102,9 +102,9 @@ DEFAULT_CONFIG = {
     "corr_update_interval_sec": 1800,
     "scheduler_best_window_sec": 10,
     "fill_reentry_cooldown_sec": 1800,
-    "black_swan_cooldown_sec": 180,
-    "black_swan_std": 3.5,
-    "black_swan_recover_checks": 2,
+    "black_swan_cooldown_sec": 60,
+    "black_swan_std": 4.5,
+    "black_swan_recover_checks": 1,
     "evolution_enabled": True,
     "evolution_interval_hours": 24,
     "evolution_population_size": 10,
@@ -478,7 +478,7 @@ class ExchangeInterface:
 class GlobalScheduler:
     def __init__(self, interval=3600):
         try:
-            self.interval = max(60, int(interval))
+            self.interval = max(10, int(interval))
         except Exception:
             self.interval = 3600
         self.last_order_mono = 0.0
@@ -574,7 +574,7 @@ class GlobalScheduler:
             if random.random() < skip_prob:
                 jitter = max(0.0, min(0.5, float(interval_jitter)))
                 self.last_order_mono = now
-                short_cooldown = max(15.0, min(300.0, self.interval * 0.15))
+                short_cooldown = max(5.0, min(60.0, self.interval * 0.10))
                 self.next_allowed_mono = now + short_cooldown * random.uniform(max(0.2, 1.0 - jitter), 1.0 + jitter)
                 return None
             token = f"{symbol}|{now:.6f}"
@@ -2294,9 +2294,14 @@ class CausalDecisionEngine:
         expected_profit_margin = atr_ratio * max(0.5, profile["tp_mult"] * tp_scale)
 
         cost_block_reason = ""
-        # 检查是否连给交易所打工都不够
+        # 执行成本检查：改为软约束，缩仓而非拒绝
         if expected_profit_margin < total_cost_barrier * 1.2:
-            cost_block_reason = f"预期利润({expected_profit_margin*100:.2f}%)不足以覆盖执行成本({total_cost_barrier*100:.2f}%)"
+            cost_scale = max(0.3, expected_profit_margin / max(0.0001, total_cost_barrier * 1.2))
+            decision["lev_scale"] = float(decision.get("lev_scale", 1.0)) * cost_scale
+            decision["cost_downscaled"] = True
+            # 只有利润完全为负才硬拒
+            if expected_profit_margin <= 0:
+                cost_block_reason = f"预期利润({expected_profit_margin*100:.2f}%)不足以覆盖执行成本({total_cost_barrier*100:.2f}%)"
 
         decision = {
             "style": style,
