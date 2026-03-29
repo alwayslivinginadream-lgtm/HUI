@@ -1435,8 +1435,17 @@ class SmartStopLoss:
                     triggered_action = 'ml_trend_exit'
                 elif current_price <= pos['best_price'] - atr * max(0.5, adaptive_trail):
                     triggered_action = 'trail_exit'
-                elif breakeven_active and current_price <= pos['entry_price'] + fee_cost * 0.5:
-                    triggered_action = 'breakeven_exit'
+                elif breakeven_active:
+                    # 阶梯锁利：浮盈越多，保护越高
+                    peak_profit = pos['best_price'] - pos['entry_price']
+                    if peak_profit > fee_cost * 3:
+                        # 浮盈>3倍手续费：锁住50%利润
+                        protect_price = pos['entry_price'] + peak_profit * 0.5
+                    else:
+                        # 刚过保本线：保住成本
+                        protect_price = pos['entry_price'] + fee_cost * 0.3
+                    if current_price <= protect_price:
+                        triggered_action = 'breakeven_exit'
                 elif current_price < pos['entry_price'] - stop_distance:
                     triggered_action = 'stop_loss'
             else:
@@ -1447,8 +1456,17 @@ class SmartStopLoss:
                     triggered_action = 'ml_trend_exit'
                 elif current_price >= pos['best_price'] + atr * max(0.5, adaptive_trail):
                     triggered_action = 'trail_exit'
-                elif breakeven_active and current_price >= pos['entry_price'] - fee_cost * 0.5:
-                    triggered_action = 'breakeven_exit'
+                elif breakeven_active:
+                    # 阶梯锁利：浮盈越多，保护越高
+                    peak_profit = pos['entry_price'] - pos['best_price']
+                    if peak_profit > fee_cost * 3:
+                        # 浮盈>3倍手续费：锁住50%利润
+                        protect_price = pos['entry_price'] - peak_profit * 0.5
+                    else:
+                        # 刚过保本线：保住成本
+                        protect_price = pos['entry_price'] - fee_cost * 0.3
+                    if current_price >= protect_price:
+                        triggered_action = 'breakeven_exit'
                 elif current_price > pos['entry_price'] + stop_distance:
                     triggered_action = 'stop_loss'
 
@@ -3995,7 +4013,7 @@ class UltimateGridStrategy(threading.Thread):
             return True
         now = time.time()
         try:
-            base_window = max(0.0, min(30.0, float(self.config.get("stop_confirm_window_sec", 6))))
+            base_window = max(0.0, min(30.0, float(self.config.get("stop_confirm_window_sec", 2))))
         except Exception:
             base_window = 6.0
         try:
@@ -4012,7 +4030,7 @@ class UltimateGridStrategy(threading.Thread):
         first_ts = float(rec.get("ts", now))
         first_price = float(rec.get("price", current_price))
         long_pos = float(self.position_contracts) >= 0
-        rebound_tol = max(0.0006, j * 0.004)
+        rebound_tol = max(0.0003, j * 0.002)
         if long_pos and current_price > first_price * (1.0 + rebound_tol):
             self.stop_confirm_pending.pop(key, None)
             return False
@@ -6154,7 +6172,7 @@ class UltimateGridStrategy(threading.Thread):
         self.config["orderbook_confirm_ticks"] = max(1, min(12, int(_clean_float(self.config.get("orderbook_confirm_ticks", 3), 3))))
         self.config["mode_min_dwell_sec"] = max(60, min(21600, int(_clean_float(self.config.get("mode_min_dwell_sec", 900), 900))))
         self.config["mode_switch_cooldown_sec"] = max(30, min(7200, int(_clean_float(self.config.get("mode_switch_cooldown_sec", 300), 300))))
-        self.config["stop_confirm_window_sec"] = max(0.0, min(30.0, _clean_float(self.config.get("stop_confirm_window_sec", 6), 6)))
+        self.config["stop_confirm_window_sec"] = max(0.0, min(30.0, _clean_float(self.config.get("stop_confirm_window_sec", 2), 6)))
         self.config["stop_trigger_jitter_ratio"] = max(0.0, min(0.4, _clean_float(self.config.get("stop_trigger_jitter_ratio", 0.08), 0.08)))
         self.config["anti_hunt_hit_threshold"] = max(1, min(8, int(_clean_float(self.config.get("anti_hunt_hit_threshold", 2), 2))))
         self.config["anti_hunt_pause_sec"] = max(60, min(21600, int(_clean_float(self.config.get("anti_hunt_pause_sec", 900), 900))))
