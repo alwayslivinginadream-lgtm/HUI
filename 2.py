@@ -263,6 +263,10 @@ DEFAULT_CONFIG = {
     "sr_direction_filter": True,
     "sr_zone_pct": 0.25,
     "symbol_close_cooldown_min": 10,
+    "symbol_max_loss_streak": 3,
+    "symbol_streak_cooldown_hr": 1.0,
+    "max_leverage_cap": 4,
+    "min_volatility_open": 0.003,
     "min_holding_sec": 60,
     "adaptive_entry_split_parts": 3,
     "adaptive_entry_candle_confirm_bars": 2,
@@ -1286,8 +1290,8 @@ class VolatilityAdapter:
         raw = self.base_leverage * self.target_volatility / current_vol
         if not math.isfinite(raw):
             return self.current_leverage
-        # 杠杆上限允许自适应调高（最多base*2），低波动时提高杠杆争取更多收益
-        self.current_leverage = max(1, min(self.base_leverage * 2, int(raw)))
+        # 杠杆上限封顶（数据证明4x以上全亏）
+        self.current_leverage = max(1, min(self.base_leverage, int(raw)))
         return self.current_leverage
 
 # ==================== 第4层：智能止损止盈 ====================
@@ -2400,6 +2404,11 @@ class CausalDecisionEngine:
             return decision
         if opportunity_score < profile["min_score"]:
             decision["reason"] = "机会分不足"
+            return decision
+        # ====== 波动率过低过滤：横盘不开单 ======
+        min_vol = float(self.config.get("min_volatility_open", 0.003))
+        if atr_ratio > 0 and atr_ratio < min_vol:
+            decision["reason"] = f"波动率过低({atr_ratio:.4f}<{min_vol})"
             return decision
         # ====== 支撑/阻力方向过滤 ======
         # 价格贴近支撑区不做空，贴近压力区不做多
@@ -3514,6 +3523,9 @@ class UltimateGridStrategy(threading.Thread):
         self.position_unrealized_pnl = 0.0
         self._last_close_ts = 0
         self._last_cooldown_log_ts = 0
+        self._symbol_loss_streak = 0
+        self._symbol_streak_until = 0
+        self._last_streak_log_ts = 0
         self.position_roe = 0.0
         self.position_margin = 0.0
         self.position_liquidation_price = 0.0 # V50新增：硬性物理防线
@@ -3947,6 +3959,18 @@ class UltimateGridStrategy(threading.Thread):
             return
         if (not math.isfinite(pnl)) or abs(pnl) <= 0:
             return
+        # ====== 同币种连亏熔断 ======
+        if not hasattr(self, '_symbol_loss_streak'):
+            self._symbol_loss_streak = 0
+        if pnl < 0:
+            self._symbol_loss_streak += 1
+            max_streak = max(2, int(self.config.get("symbol_max_loss_streak", 3)))
+            if self._symbol_loss_streak >= max_streak:
+                cooldown_hr = max(0.5, float(self.config.get("symbol_streak_cooldown_hr", 1.0)))
+                self._symbol_streak_until = time.time() + cooldown_hr * 3600
+                self.log_msg(f"🚨 连亏{self._symbol_loss_streak}笔，暂停{cooldown_hr}小时", "WARNING")
+        else:
+            self._symbol_loss_streak = 0
         # ====== 上报日亏损统计 ======
         if hasattr(self, 'safety_monitor') and self.safety_monitor:
             self.safety_monitor.record_trade_pnl(pnl)
@@ -5017,6 +5041,15 @@ class UltimateGridStrategy(threading.Thread):
                 if now_ts - getattr(self, '_last_cooldown_log_ts', 0) >= 30:
                     self.log_msg(f"平仓冷却中，还需{remaining}秒", "INFO")
                     self._last_cooldown_log_ts = now_ts
+                return False
+            # ====== 同币种连亏冷却 ======
+            streak_until = getattr(self, '_symbol_streak_until', 0)
+            if streak_until > 0 and time.time() < streak_until:
+                remaining_min = int((streak_until - time.time()) / 60)
+                now_ts = time.time()
+                if now_ts - getattr(self, '_last_streak_log_ts', 0) >= 60:
+                    self.log_msg(f"连亏冷却中，还需{remaining_min}分钟", "WARNING")
+                    self._last_streak_log_ts = now_ts
                 return False
             if self.has_position and (not bool(self.config.get("allow_scale_in", False))):
                 now_ts = time.time()
