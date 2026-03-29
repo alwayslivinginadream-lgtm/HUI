@@ -6193,6 +6193,7 @@ class BotGUI:
             candidates.append(os.path.join(os.path.dirname(sys.executable), "phoenixq_config.json"))
         candidates.append(os.path.join(os.getcwd(), "phoenixq_config.json"))
         candidates.append(os.path.join(os.path.expanduser("~"), "Desktop", "phoenixq_config.json"))
+        candidates.append(os.path.join(os.path.expanduser("~"), "Desktop", "HUI-main", "phoenixq_config.json"))
         
         found_path = None
         for p in candidates:
@@ -6200,6 +6201,12 @@ class BotGUI:
                 found_path = p
                 break
         
+        # 启动日志：显示配置文件搜索结果
+        try:
+            print(f"[PhoenixQ] 配置搜索: frozen={getattr(sys, 'frozen', False)} exe={sys.executable} cwd={os.getcwd()}")
+            print(f"[PhoenixQ] 配置路径: {found_path or '未找到'}")
+        except:
+            pass
         if found_path:
             CONFIG_FILE = found_path  # 更新全局路径，确保save也写到同一个文件
             try:
