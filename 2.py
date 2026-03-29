@@ -262,6 +262,8 @@ DEFAULT_CONFIG = {
     "adaptive_entry_limit_timeout_sec": 120,
     "sr_direction_filter": True,
     "sr_zone_pct": 0.25,
+    "symbol_close_cooldown_min": 10,
+    "min_holding_sec": 60,
     "adaptive_entry_split_parts": 3,
     "adaptive_entry_candle_confirm_bars": 2,
     "execution_degraded": False,
@@ -1383,6 +1385,16 @@ class SmartStopLoss:
 
         for pos in self.positions[symbol]:
             holding_time = (time.time() - pos['entry_time']) / 3600
+            holding_sec = time.time() - pos['entry_time']
+            min_hold_sec = max(30, int(self.config.get("min_holding_sec", 60)))
+            # 最短持仓时间：防止刚开就平（防爆仓除外）
+            if holding_sec < min_hold_sec and liquidation_price <= 0:
+                return None
+            if holding_sec < min_hold_sec and liquidation_price > 0:
+                # 有爆仓风险时只检查强平防御
+                distance_pct = abs(current_price - liquidation_price) / current_price if current_price > 0 else 1.0
+                if distance_pct >= 0.05:
+                    return None  # 离强平远，继续等
             atr = pos['atr']
             side = pos.get('side', 'buy')
             stop_distance = atr * use_atr_multiplier
@@ -3500,6 +3512,8 @@ class UltimateGridStrategy(threading.Thread):
         self.position_entry_price = 0.0
         self.position_mark_price = 0.0
         self.position_unrealized_pnl = 0.0
+        self._last_close_ts = 0
+        self._last_cooldown_log_ts = 0
         self.position_roe = 0.0
         self.position_margin = 0.0
         self.position_liquidation_price = 0.0 # V50新增：硬性物理防线
@@ -4994,6 +5008,16 @@ class UltimateGridStrategy(threading.Thread):
             if hasattr(self, 'safety_monitor') and self.safety_monitor and self.safety_monitor.is_daily_fused():
                 self.log_msg("🚨 日亏损熔断中，禁止新开仓", "WARNING")
                 return False
+            # ====== 平仓冷却检查 ======
+            cooldown_min = max(5, int(self.config.get("symbol_close_cooldown_min", 10)))
+            last_close = getattr(self, '_last_close_ts', 0)
+            if last_close > 0 and (time.time() - last_close) < cooldown_min * 60:
+                remaining = int(cooldown_min * 60 - (time.time() - last_close))
+                now_ts = time.time()
+                if now_ts - getattr(self, '_last_cooldown_log_ts', 0) >= 30:
+                    self.log_msg(f"平仓冷却中，还需{remaining}秒", "INFO")
+                    self._last_cooldown_log_ts = now_ts
+                return False
             if self.has_position and (not bool(self.config.get("allow_scale_in", False))):
                 now_ts = time.time()
                 if now_ts - self.last_scalein_log_ts >= 10:
@@ -5866,6 +5890,10 @@ class UltimateGridStrategy(threading.Thread):
 
             if all_closed:
                 self.has_position = False
+                # 平仓冷却：记录该币种平仓时间，防止立刻重新开单
+                self._last_close_ts = time.time()
+                cooldown_min = max(5, int(self.config.get("symbol_close_cooldown_min", 10)))
+                self.log_msg(f"平仓完成，{cooldown_min}分钟内不再开仓", "INFO")
             return all_closed
         except Exception as e:
             self.log_msg(f"平仓异常: {e}", "ERROR")
