@@ -260,7 +260,7 @@ DEFAULT_CONFIG = {
     "adaptive_entry_mab_alpha": 0.15,
     "adaptive_entry_pullback_atr_mult": 0.5,
     "adaptive_entry_limit_timeout_sec": 120,
-    "sr_direction_filter": true,
+    "sr_direction_filter": True,
     "sr_zone_pct": 0.25,
     "adaptive_entry_split_parts": 3,
     "adaptive_entry_candle_confirm_bars": 2,
