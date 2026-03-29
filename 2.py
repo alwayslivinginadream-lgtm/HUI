@@ -6139,7 +6139,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.1.3 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.1.4 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -6600,7 +6600,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.1.3 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.1.4 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
@@ -6617,6 +6617,8 @@ class BotGUI:
         self.btn_stop = ttk.Button(cmd_bar, text="⏹ 紧急熔断", command=self.stop, style="Stop.TButton")
         self.btn_stop.pack(side="left", padx=6, ipady=4)
         self.btn_stop["state"] = "disabled"
+        self.btn_save_config = ttk.Button(cmd_bar, text="💾 保存配置", command=self._gui_save_config)
+        self.btn_save_config.pack(side="left", padx=6, ipady=4)
         self.btn_update = ttk.Button(cmd_bar, text="🔄 一键更新", command=self._auto_update)
         self.btn_update.pack(side="right", padx=6, ipady=4)
         self.btn_upload_log = ttk.Button(cmd_bar, text="📤 上传日志", command=self._upload_log)
@@ -7484,6 +7486,16 @@ class BotGUI:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             return ctx
+
+    def _gui_save_config(self):
+        """GUI保存配置按钮"""
+        try:
+            self.save_config()
+            self.log("💾 配置已保存到 " + CONFIG_FILE, "INFO")
+            from tkinter import messagebox
+            messagebox.showinfo("保存成功", "配置已保存！下次启动自动加载。")
+        except Exception as e:
+            self.log(f"❌ 保存配置失败: {e}", "ERROR")
 
     def _auto_update(self):
         """一键从GitHub下载最新版本并重启"""
