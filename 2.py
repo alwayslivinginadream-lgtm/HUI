@@ -1290,8 +1290,8 @@ class VolatilityAdapter:
         raw = self.base_leverage * self.target_volatility / current_vol
         if not math.isfinite(raw):
             return self.current_leverage
-        # 杠杆上限封顶（数据证明4x以上全亏）
-        self.current_leverage = max(1, min(self.base_leverage, int(raw)))
+        # 杠杆自适应：低波动可提高，但封顶不超过base*2
+        self.current_leverage = max(1, min(self.base_leverage * 2, int(raw)))
         return self.current_leverage
 
 # ==================== 第4层：智能止损止盈 ====================
