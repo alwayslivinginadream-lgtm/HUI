@@ -4495,7 +4495,7 @@ class UltimateGridStrategy(threading.Thread):
         while self.running:
             try:
                 self.maybe_daily_random_pause()
-                if self.circuit_break:
+                if self.circuit_break and bool(self.config.get('black_swan_enabled', False)):
                     cooldown = int(self.config.get('black_swan_cooldown_sec', 300))
                     recover_need = int(self.config.get('black_swan_recover_checks', 3))
                     if self.circuit_break_since == 0:
@@ -4850,10 +4850,8 @@ class UltimateGridStrategy(threading.Thread):
                 except Exception:
                     pass
                 if self.blackswan.update(price, orderbook_depth=ob_depth if ob_depth > 0 else None):
-                    self.log_msg("【第15层】检测到黑天鹅！暂停交易", "WARNING")
-                    self.circuit_break = True
-                    self.circuit_break_since = time.time()
-                    self.stable_recover_count = 0
+                    self.log_msg("【第15层】检测到异常波动（已忽略，止损保护中）", "INFO")
+                    # 黑天鹅暂停已关闭：有止损保护，大波动是机会不是风险
 
                 # 每小时更新参数
                 param_gate = int(3600 * random.uniform(0.8, 1.2))
