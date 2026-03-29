@@ -267,7 +267,7 @@ DEFAULT_CONFIG = {
     "stale_order_cancel_sec": 600,
 }
 
-CONFIG_FILE = "phoenixq_config.json"
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "phoenixq_config.json")
 API_SEMAPHORE = threading.Semaphore(5)      # API并发限制
 API_RATE_LIMIT_LOCK = threading.Lock()
 API_RATE_LIMIT_UNTIL = 0.0
