@@ -2621,9 +2621,9 @@ class EvolutionEngine(threading.Thread):
         self.backup_dir = "params_backup"
         self.evolve_round = 0
         self.shadow_style_profiles = {
-            "保守": {"buy_open": 0.66, "sell_open": 0.34, "min_score": 0.18, "sl_mult": 1.3, "tp_mult": 1.2, "trail_mult": 0.9, "lev_scale": 0.7},
-            "均衡": {"buy_open": 0.60, "sell_open": 0.40, "min_score": 0.12, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2, "lev_scale": 1.0},
-            "激进": {"buy_open": 0.56, "sell_open": 0.44, "min_score": 0.10, "sl_mult": 2.2, "tp_mult": 2.5, "trail_mult": 1.7, "lev_scale": 1.25}
+            "保守": {"buy_open": 0.58, "sell_open": 0.42, "min_score": 0.08, "sl_mult": 1.3, "tp_mult": 1.2, "trail_mult": 0.9, "lev_scale": 0.7},
+            "均衡": {"buy_open": 0.55, "sell_open": 0.45, "min_score": 0.06, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2, "lev_scale": 1.0},
+            "激进": {"buy_open": 0.52, "sell_open": 0.48, "min_score": 0.04, "sl_mult": 2.2, "tp_mult": 2.5, "trail_mult": 1.7, "lev_scale": 1.25}
         }
         self.shadow_decider = CausalDecisionEngine(self.shadow_style_profiles, self.get_config())
         os.makedirs(self.backup_dir, exist_ok=True)
@@ -3524,9 +3524,9 @@ class UltimateGridStrategy(threading.Thread):
         self.orderbook_cache = None
         self.orderbook_cache_ts = 0.0
         self.style_profiles = {
-            "保守": {"buy_open": 0.66, "sell_open": 0.34, "min_score": 0.18, "sl_mult": 1.3, "tp_mult": 1.2, "trail_mult": 0.9, "lev_scale": 0.7},
-            "均衡": {"buy_open": 0.60, "sell_open": 0.40, "min_score": 0.12, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2, "lev_scale": 1.0},
-            "激进": {"buy_open": 0.56, "sell_open": 0.44, "min_score": 0.10, "sl_mult": 2.2, "tp_mult": 2.5, "trail_mult": 1.7, "lev_scale": 1.25}
+            "保守": {"buy_open": 0.58, "sell_open": 0.42, "min_score": 0.08, "sl_mult": 1.3, "tp_mult": 1.2, "trail_mult": 0.9, "lev_scale": 0.7},
+            "均衡": {"buy_open": 0.55, "sell_open": 0.45, "min_score": 0.06, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2, "lev_scale": 1.0},
+            "激进": {"buy_open": 0.52, "sell_open": 0.48, "min_score": 0.04, "sl_mult": 2.2, "tp_mult": 2.5, "trail_mult": 1.7, "lev_scale": 1.25}
         }
         self.apply_tunable_params(config)
         self.causal_engine = CausalDecisionEngine(
