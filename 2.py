@@ -40,7 +40,7 @@ DEFAULT_CONFIG = {
     "min_24h_volume": 1000000,             # 最小成交量
     "funding_rate_threshold": 0.00025,     # 资金费率阈值
     "max_drawdown": 5.0,                   # 最大回撤百分比（熔断）
-    "daily_loss_limit_pct": 20.0,           # 日亏损熔断线（%），当日亏损达此值停止新开仓
+    "daily_loss_limit_pct": 10.0,           # 日亏损熔断线（%），当日亏损达此值停止新开仓
     "daily_loss_reset_hour_utc": 0,        # 日亏损重置时间（UTC小时）
     "max_portfolio_var": 0.040,
     "var_lookback_hours": 720,
