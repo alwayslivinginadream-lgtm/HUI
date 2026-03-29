@@ -259,7 +259,7 @@ DEFAULT_CONFIG = {
     "adaptive_entry_enabled": True,
     "adaptive_entry_mab_alpha": 0.15,
     "adaptive_entry_pullback_atr_mult": 0.5,
-    "adaptive_entry_limit_timeout_sec": 300,
+    "adaptive_entry_limit_timeout_sec": 120,
     "adaptive_entry_split_parts": 3,
     "adaptive_entry_candle_confirm_bars": 2,
     "execution_degraded": False,
@@ -562,21 +562,17 @@ class GlobalScheduler:
                 candidates[s] = v
             if not candidates:
                 return None
-            best_symbol = max(candidates, key=lambda x: candidates[x])
-            if now <= self.best_symbol_until_mono and self.best_symbol and symbol != self.best_symbol:
+            # 多槽位并行：按score排名，前N名都可以拿令牌（N=剩余槽位数）
+            ranked = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+            remaining_slots = max(1, max_active - len(self.active_symbols))
+            top_symbols = [s for s, v in ranked[:remaining_slots]]
+            if symbol not in top_symbols:
                 return None
-            if now > self.best_symbol_until_mono:
-                self.best_symbol = best_symbol
-                self.best_symbol_until_mono = now + max(1, int(best_window_sec))
-            if best_symbol != symbol:
+            # 防并发：同一币种短时间内不重复发令牌
+            last_token_time = self.last_seen.get(f"_token_{symbol}", 0)
+            if now - last_token_time < 3.0:
                 return None
-            skip_prob = max(0.0, min(0.3, float(skip_prob)))
-            if random.random() < skip_prob:
-                jitter = max(0.0, min(0.5, float(interval_jitter)))
-                self.last_order_mono = now
-                short_cooldown = max(5.0, min(60.0, self.interval * 0.10))
-                self.next_allowed_mono = now + short_cooldown * random.uniform(max(0.2, 1.0 - jitter), 1.0 + jitter)
-                return None
+            self.last_seen[f"_token_{symbol}"] = now
             token = f"{symbol}|{now:.6f}"
             self.pending_tokens[token] = symbol
             if len(self.pending_tokens) > 200:
@@ -6147,7 +6143,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.1.6 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.1.7 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -6608,7 +6604,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.1.6 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.1.7 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
