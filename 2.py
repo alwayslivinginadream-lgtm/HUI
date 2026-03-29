@@ -5798,13 +5798,14 @@ class UltimateGridStrategy(threading.Thread):
                         if side_tag not in ("long", "short"):
                             side_tag = "long" if contracts > 0 else "short"
                         pnl_quote = 0.0
-                        notional_entry = abs(contracts) * ep
-                        if side_tag == "long":
-                            pnl_quote = (actual_exec - ep) * abs(contracts)
-                        else:
-                            pnl_quote = (ep - actual_exec) * abs(contracts)
                         contract_size_pos = float(pos.get('contractSize', pos.get('info', {}).get('quanto_multiplier', 1)) or 1)
-                        pnl_quote = pnl_quote * (contract_size_pos if contract_size_pos > 0 else 1.0)
+                        if contract_size_pos <= 0:
+                            contract_size_pos = 1.0
+                        notional_entry = abs(contracts) * ep * contract_size_pos
+                        if side_tag == "long":
+                            pnl_quote = (actual_exec - ep) * abs(contracts) * contract_size_pos
+                        else:
+                            pnl_quote = (ep - actual_exec) * abs(contracts) * contract_size_pos
                         fee_rate = float(self.config.get("taker_fee", 0.0005))
                         pnl_quote -= abs(notional_entry) * fee_rate
                         self._record_realized_pnl(float(pnl_quote))
