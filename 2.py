@@ -3812,6 +3812,7 @@ class UltimateGridStrategy(threading.Thread):
         self.last_rest_fallback_log_ts = 0.0
         self.last_scheduler_wait_log_ts = 0.0
         self.last_scalein_log_ts = 0
+        self._fee_check_log_ts = 0
         self._fee_check_log_ts = 0.0
         self.last_price_error_log_ts = 0.0
         self.last_gc_ts = time.time() # V50内存优化：定期GC时间戳
@@ -6077,6 +6078,8 @@ class UltimateGridStrategy(threading.Thread):
                     self.log_msg(f"订单已失效/取消 ({status})")
                     if self.scheduler and not self.has_position:
                         self.scheduler.cancel_pending(self.symbol)
+                    if self.scheduler and not self.has_position:
+                        self.scheduler.cancel_pending(self.symbol)
                     # ==== 触发重进逻辑 ====
                     try:
                         timeout_limit = order.get("_timeout", 0)
@@ -6605,7 +6608,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.2.3 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.3.0 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -7067,7 +7070,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.2.3 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.3.0 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
