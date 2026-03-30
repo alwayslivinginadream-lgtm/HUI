@@ -6416,6 +6416,10 @@ class UltimateGridStrategy(threading.Thread):
                 ctx_to_use = getattr(self, "position_open_context", None) or getattr(self, "last_decision_context", None)
                 if ctx_to_use:
                     self.ensemble.update_weights(ctx_to_use, actual_outcome)
+                    # 记录融合样本数
+                    if not hasattr(self.ensemble, 'update_count'):
+                        self.ensemble.update_count = 0
+                    self.ensemble.update_count += 1
         except Exception as e:
             self.log_msg(f"贝叶斯权重更新异常: {e}", "WARNING")
 
@@ -7291,19 +7295,33 @@ class BotGUI:
 
         # ---- ML ----
         try:
+            total_samples = 0
+            total_correct = 0
+            agg_weights = None
+            feat_names = ["动量短","动量中","动量差","波动比","ATR归一","布林","MA交叉","偏度","连胜","RSI","ROC","MACD"]
             for s in strategies:
                 if hasattr(s, 'ml_predictor') and s.ml_predictor:
                     ml = s.ml_predictor
-                    acc = ml.get_accuracy() if hasattr(ml, 'get_accuracy') else 0
                     samples = getattr(ml, 'sample_count', 0)
-                    phase = "未启动" if samples == 0 else ("学习中" if samples < 100 else "✅ 已稳定")
-                    self.lbl_ml_accuracy.config(text=f"准确率: {acc:.0%} | 样本: {samples}/100 | 阶段: {phase}")
+                    total_samples += samples
+                    acc = ml.get_accuracy() if hasattr(ml, 'get_accuracy') else 0
+                    total_correct += int(acc * samples)
                     if hasattr(ml, 'weights') and ml.weights is not None:
-                        feat_names = ["动量短","动量中","动量差","波动比","ATR归一","布林","MA交叉","偏度","连胜","RSI","ROC","MACD"]
-                        w = ml.weights
-                        w_str = " | ".join(f"{feat_names[i]}:{w[i]:+.2f}" for i in range(min(len(feat_names), len(w))))
-                        self.lbl_ml_weights.config(text=f"  权重: {w_str}")
-                    break
+                        if agg_weights is None:
+                            agg_weights = [0.0] * len(ml.weights)
+                        for i in range(min(len(agg_weights), len(ml.weights))):
+                            agg_weights[i] += ml.weights[i]
+            if total_samples > 0 and agg_weights:
+                for i in range(len(agg_weights)):
+                    agg_weights[i] /= len(strategies)
+                acc = total_correct / total_samples
+                phase = "未启动" if total_samples == 0 else ("学习中" if total_samples < 100 else "✅ 已稳定")
+                self.lbl_ml_accuracy.config(text=f"准确率: {acc:.0%} | 样本: {total_samples}/100 | 阶段: {phase}")
+                w_str = " | ".join(f"{feat_names[i]}:{agg_weights[i]:+.2f}" for i in range(min(len(feat_names), len(agg_weights))))
+                self.lbl_ml_weights.config(text=f"  权重: {w_str}")
+            else:
+                self.lbl_ml_accuracy.config(text="准确率: --% | 样本: 0/100 | 阶段: 未启动")
+                self.lbl_ml_weights.config(text="  权重: 等待学习数据...")
         except Exception:
             pass
 
@@ -7332,18 +7350,26 @@ class BotGUI:
 
         # ---- 贝叶斯 ----
         try:
+            agg_weights = None
+            total_updates = 0
             for s in strategies:
                 if hasattr(s, 'ensemble') and s.ensemble:
                     ens = s.ensemble
                     if hasattr(ens, 'weights') and ens.weights:
-                        w = ens.weights
-                        names = ["趋势", "ML", "订单簿", "情绪"]
-                        w_str = " | ".join(f"{names[i]}: {w[i]:.0%}" for i in range(min(len(names), len(w))))
-                        self.lbl_bayes_weights.config(text=w_str)
-                    samples = getattr(ens, 'update_count', 0)
-                    phase = "初始化" if samples < 10 else ("学习中" if samples < 50 else "✅ 已稳定")
-                    self.lbl_bayes_samples.config(text=f"  融合样本: {samples} | 阶段: {phase}")
-                    break
+                        if agg_weights is None:
+                            agg_weights = [0.0] * len(ens.weights)
+                        for i in range(min(len(agg_weights), len(ens.weights))):
+                            agg_weights[i] += ens.weights[i]
+                    # update_weights 被调用次数 = 融合样本数
+                    total_updates += getattr(ens, 'update_count', 0)
+            if agg_weights:
+                for i in range(len(agg_weights)):
+                    agg_weights[i] /= max(1, len(strategies))
+                names = ["趋势", "ML", "订单簿", "情绪"]
+                w_str = " | ".join(f"{names[i]}: {agg_weights[i]:.0%}" for i in range(min(len(names), len(agg_weights))))
+                self.lbl_bayes_weights.config(text=w_str)
+            phase = "初始化" if total_updates < 10 else ("学习中" if total_updates < 50 else "✅ 已稳定")
+            self.lbl_bayes_samples.config(text=f"  融合样本: {total_updates} | 阶段: {phase}")
         except Exception:
             pass
 
@@ -7351,15 +7377,21 @@ class BotGUI:
         try:
             if hasattr(self, 'evolution_engine') and self.evolution_engine:
                 evo = self.evolution_engine
-                gen = getattr(evo, 'generation', 0)
-                best_fit = getattr(evo, 'best_fitness', None)
+                gen = getattr(evo, 'evolve_round', 0)
+                # 最优适应度从 population 中获取
+                best_fit = None
+                with getattr(evo, 'population_lock', threading.Lock()):
+                    pop = getattr(evo, 'population', [])
+                    if pop:
+                        ranked = sorted(pop, key=lambda x: x.get("score", -1), reverse=True)
+                        best_fit = ranked[0].get("score", None)
                 fit_str = f"{best_fit:.4f}" if best_fit is not None else "--"
-                next_evo = getattr(evo, 'next_evolution_time', 0)
+                next_evo = getattr(evo, 'next_evolve_due', 0)
                 if next_evo > 0:
                     remain = max(0, next_evo - time.time())
-                    next_str = f"{remain/60:.0f}分钟后"
+                    next_str = f"{remain/3600:.1f}小时后"
                 else:
-                    next_str = "--"
+                    next_str = "首次进化中..."
                 self.lbl_evo_gen.config(text=f"当前代数: {gen} | 最优适应度: {fit_str} | 下次进化: {next_str}")
                 if hasattr(evo, 'best_params') and evo.best_params:
                     bp = evo.best_params
