@@ -5457,6 +5457,7 @@ class UltimateGridStrategy(threading.Thread):
             # ATR限制仓位 = 最大亏损金额 / 止损距离
             _atr_for_sizing = getattr(self, 'cached_atr', 0.0)
             _sl_mult_for_sizing = float(decision.get("sl_mult", 1.7))
+            _atr_limited = False
             if _atr_for_sizing > 0 and safe_price > 0:
                 try:
                     _risk_pct = max(0.5, min(3.0, float(self.config.get("risk_per_trade_pct", 1.0))))
@@ -5469,9 +5470,10 @@ class UltimateGridStrategy(threading.Thread):
                             _atr_contracts = (_risk_amount * leverage_for_sizing) / (_atr_for_sizing * _sl_mult_for_sizing)
                         # 取原仓位和ATR限制仓位的较小值（取小不取大，确保不超风险）
                         if _atr_contracts < total_contracts:
+                            _atr_limited = True
                             total_contracts = _atr_contracts
                             if hasattr(self, 'log_msg'):
-                                self.log_msg(f"【ATR仓位管理】波动率偏高，ATR限制仓位缩至 {_atr_contracts:.4f}", "INFO")
+                                self.log_msg(f"【ATR仓位管理】波动率偏高，ATR限制仓位缩至 {_atr_contracts:.4f} (margin={effective_margin_cap:.2f}U lev={leverage_for_sizing:.1f}x atr={_atr_for_sizing:.8f} sl={_sl_mult_for_sizing:.1f} cs={contract_size} min={min_amount})", "INFO")
                 except Exception:
                     pass  # ATR仓位计算失败时使用原始仓位，不影响正常运行
 
@@ -5504,7 +5506,17 @@ class UltimateGridStrategy(threading.Thread):
             else:
                 qty = total_contracts
 
+            # 诊断日志：打印仓位计算中间值（仅首次开仓时打印，避免刷屏）
+            if not hasattr(self, '_pos_diag_printed'):
+                self._pos_diag_printed = True
+                self.log_msg(f"【仓位诊断】margin_cap={effective_margin_cap:.2f}U lev={leverage_for_sizing:.1f}x price={safe_price:.6f} cs={contract_size} contracts={total_contracts:.4f} atr_limited={_atr_limited} min_amt={min_amount} qty={qty:.4f}", "INFO")
+
             if qty < min_amount:
+                if _atr_limited:
+                    self.log_msg(f"【ATR仓位不足】ATR风控限制后qty({qty:.4f})低于交易所最小量({min_amount})，跳过本次开仓（波动率过高/仓位太小）", "WARNING")
+                    if self.scheduler:
+                        self.scheduler.cancel_token(decision.get("_order_token", ""))
+                    return False
                 qty = min_amount
 
             # 终极安全断言：硬性限制名义价值绝对不能超过分配额度的杠杆倍数
@@ -6608,7 +6620,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.3.0 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.3.1 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -7070,7 +7082,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.3.0 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.3.1 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
