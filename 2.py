@@ -3780,6 +3780,8 @@ class UltimateGridStrategy(threading.Thread):
         self.last_ohlcv_fetch = 0
         self.cached_atr = 0.0
         self.cached_volume_ratio = 1.0
+        self._leverage_cache_val = 0.0
+        self._leverage_cache_ts = 0.0
         self.signal_health_score = 1.0
         self.signal_outcomes = deque(maxlen=50)
         self.last_state = MarketState.RANGE
@@ -6355,6 +6357,10 @@ class UltimateGridStrategy(threading.Thread):
 
     def _get_confirmed_leverage_for_sizing(self, target_leverage):
         target = int(max(1, min(10, int(target_leverage or self.config.get('leverage', 3)))))
+        now = time.time()
+        # 缓存120秒：避免50个币种同时下单时被Gate.io限频导致降级到1x
+        if self._leverage_cache_val > 0 and (now - self._leverage_cache_ts) < 120:
+            return self._leverage_cache_val
         confirmed = 0.0
         try:
             api_call(self.exchange.set_leverage, target, self.symbol)
@@ -6376,10 +6382,19 @@ class UltimateGridStrategy(threading.Thread):
             confirmed = 0.0
         if confirmed > 0:
             self.config['leverage'] = int(max(1, min(10, confirmed)))
+            self._leverage_cache_val = float(max(1.0, min(10.0, confirmed)))
+            self._leverage_cache_ts = now
             if abs(confirmed - target) > 0.5:
                 self.log_msg(f"杠杆确认值与目标不一致(target={target}x, confirmed={confirmed:.2f}x)，按确认值计算仓位", "WARNING")
-            return float(max(1.0, min(10.0, confirmed)))
-        self.log_msg(f"无法确认实际杠杆(target={target}x)，按1x保守计算仓位", "WARNING")
+            return self._leverage_cache_val
+        # fetch_positions失败时：如果VolatilityAdapter刚设过杠杆，直接用config里的值
+        cfg_lev = float(self.config.get('leverage', 3))
+        if cfg_lev >= 1:
+            self.log_msg(f"无法通过API确认杠杆(target={target}x)，使用已配置值{cfg_lev}x（120s缓存）", "WARNING")
+            self._leverage_cache_val = cfg_lev
+            self._leverage_cache_ts = now
+            return cfg_lev
+        self.log_msg(f"无法确认实际杠杆且无配置值，按1x保守计算仓位", "WARNING")
         return 1.0
 
     def cleanup(self):
@@ -6620,7 +6635,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.3.1 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.3.2 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -7082,7 +7097,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.3.1 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.3.2 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
