@@ -239,8 +239,8 @@ DEFAULT_CONFIG = {
     "max_active_symbols": 6,
     "slot_pressure_on_ratio": 0.80,
     "slot_pressure_off_ratio": 0.55,
-    "slot_pressure_take_roe": 0.0045,
-    "slot_pressure_retrace_roe": 0.0025,
+    "slot_pressure_take_roe": 0.05,
+    "slot_pressure_retrace_roe": 0.02,
     "slot_pressure_max_hold_sec": 5400,
     "slot_pressure_time_relief_min_roe": -0.0015,
     "slot_pressure_cooldown_sec": 120,
@@ -4637,8 +4637,8 @@ class UltimateGridStrategy(threading.Thread):
         elif atr_ratio > 0.03: # 极高波动率
             volatility_multiplier = 2.0
 
-        take_roe = float(self.config.get("slot_pressure_take_roe", 0.0045)) * volatility_multiplier
-        retrace_roe = float(self.config.get("slot_pressure_retrace_roe", 0.0025)) * volatility_multiplier
+        take_roe = float(self.config.get("slot_pressure_take_roe", 0.05)) * volatility_multiplier
+        retrace_roe = float(self.config.get("slot_pressure_retrace_roe", 0.02)) * volatility_multiplier
 
         max_hold_sec = max(600, int(self.config.get("slot_pressure_max_hold_sec", 5400)))
         min_roe_for_time = float(self.config.get("slot_pressure_time_relief_min_roe", -0.0015))
@@ -4646,8 +4646,9 @@ class UltimateGridStrategy(threading.Thread):
         best = max(float(self.best_roe_seen), roe)
         hold_sec = (now - self.position_open_ts) if self.position_open_ts > 0 else 0.0
         slip_estimate = self._get_dynamic_slip_estimate(atr, price)
-        if best >= take_roe and (best - roe) >= retrace_roe:
-            self.log_msg(f"槽位压力触发到手即走: occ={occ_ratio:.2f} roe={roe:.4f} best={best:.4f}", "WARNING")
+        # 只有当持仓时间超过2分钟且 ROE 显著回撤时才触发（防止刚开仓就被平）
+        if best >= take_roe and (best - roe) >= retrace_roe and hold_sec > 120:
+            self.log_msg(f"槽位压力触发到手即走: occ={occ_ratio:.2f} roe={roe:.4f} best={best:.4f} hold={int(hold_sec)}s", "WARNING")
             closed = self.close_all_positions(expected_price=price, reason="slot_take_and_run", slippage_estimate=slip_estimate)
             if closed:
                 self.record_exit_action("trail_exit", pnl_actual=getattr(self, "_last_close_pnl", None))
