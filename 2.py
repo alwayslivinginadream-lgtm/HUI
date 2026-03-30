@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import json
 import copy
@@ -5267,7 +5267,7 @@ class UltimateGridStrategy(threading.Thread):
         if not self._place_order_lock.acquire(blocking=False):
             return False  # 另一个开仓流程正在进行，跳过
         try:
-        return self._place_one_order_inner(buy_prob, price_range, leverage, decision)
+            return self._place_one_order_inner(buy_prob, price_range, leverage, decision)
         finally:
             self._place_order_lock.release()
 
