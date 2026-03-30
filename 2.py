@@ -3796,7 +3796,8 @@ class UltimateGridStrategy(threading.Thread):
         self.last_ws_ts = 0.0
         self.last_rest_fallback_log_ts = 0.0
         self.last_scheduler_wait_log_ts = 0.0
-        self.last_scalein_log_ts = 0.0
+        self.last_scalein_log_ts = 0
+        self._fee_check_log_ts = 0.0
         self.last_price_error_log_ts = 0.0
         self.last_gc_ts = time.time() # V50内存优化：定期GC时间戳
         self.last_rest_ok_price = 0.0
@@ -5317,8 +5318,34 @@ class UltimateGridStrategy(threading.Thread):
                     self.last_scalein_log_ts = now_ts
                 return False
             if not decision.get("entry_allowed", False):
-                self.log_msg(f"开仓门禁未通过({decision.get('reason', '未知')})")
+                self.log_msg(f"开仓门禁未通过({decision.get('reason', 'unknown')})")
                 return False
+
+            # ====== 手续费覆盖检查：预期利润不够付手续费就不开仓 ======
+            try:
+                _atr_val = getattr(self, 'cached_atr', 0.0)
+                if _atr_val > 0 and safe_price > 0:
+                    # 预期利润 = ATR × tp_mult 的约一半（保守估计）
+                    maker_fee = float(self.config.get("maker_fee", 0.0002))
+                    taker_fee = float(self.config.get("taker_fee", 0.0005))
+                    fee_rate = maker_fee + taker_fee  # 开仓限价+平仓市价
+                    # 最小名义价值
+                    min_notional = max_amount if min_amount > 0 else 0
+                    if is_contract and contract_size > 0:
+                        min_notional = max(min_notional, float(market.get('limits', {}).get('cost', {}).get('min', 0) or 0))
+                    if min_notional > 0:
+                        round_trip_fee = min_notional * fee_rate
+                        # 保守预期利润 = ATR × tp_mult × qty × 0.5（只吃一半行情）
+                        tp_mult_val = float(decision.get("tp_mult", 2.5))
+                        expected_profit = _atr_val * tp_mult_val * qty * contract_size if (is_contract and contract_size > 0) else _atr_val * tp_mult_val * qty
+                        if expected_profit < round_trip_fee * 1.5:
+                            now_ts = time.time()
+                            if now_ts - getattr(self, '_fee_check_log_ts', 0) >= 30:
+                                self.log_msg(f"⚠️ 预期利润({expected_profit:.4f}U)不足以覆盖手续费({round_trip_fee:.4f}U×1.5)，跳过开仓", "WARNING")
+                                self._fee_check_log_ts = now_ts
+                            return False
+            except Exception:
+                pass  # fee check 失败不阻止开仓
             side = decision.get("side")
             if side not in ("buy", "sell"):
                 return False
