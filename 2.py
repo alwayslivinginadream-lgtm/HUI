@@ -3368,7 +3368,7 @@ class EvolutionEngine(threading.Thread):
     def _backup_current(self, candidates):
         cfg = self.get_config()
         payload = {
-            "version": "v19",
+            "version": "v20",
             "backup_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "current_tunable": self._get_base_params(),
             "candidate_count": len(candidates),
@@ -6516,7 +6516,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.1.9 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.2.0 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -6978,7 +6978,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.1.9 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.2.0 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
@@ -8518,5 +8518,6 @@ if __name__ == "__main__":
     except Exception as e:
         with open("error_ultimate.log", "w") as f:
             traceback.print_exc(file=f)
+
 
 
