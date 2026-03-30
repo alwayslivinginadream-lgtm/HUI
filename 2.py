@@ -1425,12 +1425,13 @@ class VolatilityAdapter:
 
 # ==================== 第4层：智能止损止盈 ====================
 class SmartStopLoss:
-    def __init__(self, atr_multiplier=2, max_holding_hours=24, exchange=None, log_callback=None):
+    def __init__(self, atr_multiplier=2, max_holding_hours=24, exchange=None, log_callback=None, config=None):
         self.atr_multiplier = atr_multiplier
         self.max_holding_hours = max_holding_hours
         self.positions = {}
         self.exchange = exchange
         self.log_msg = log_callback
+        self.config = config or {}
 
     def _save_state(self):
         try:
