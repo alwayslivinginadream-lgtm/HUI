@@ -5260,9 +5260,25 @@ class UltimateGridStrategy(threading.Thread):
             return False
 
     def place_one_order(self, buy_prob, price_range, leverage, decision):
+        # ====== 串行锁防止并发超额 ======
+        if not hasattr(self, '_place_order_lock'):
+            self._place_order_lock = threading.Lock()
+        if not self._place_order_lock.acquire(blocking=False):
+            return False  # 另一个开仓流程正在进行，跳过
+        try:
+        return self._place_one_order_inner(buy_prob, price_range, leverage, decision)
+        finally:
+            self._place_order_lock.release()
+
+    def _place_one_order_inner(self, buy_prob, price_range, leverage, decision):
         try:
             decision = decision if isinstance(decision, dict) else {}
             reason = str(decision.get("reason", ""))
+            # ====== 总保证金硬上限检查（第一道防线）=====
+            _quick_used = self._estimate_used_margin_total(refresh_sec=0)
+            _quick_total = float(self.config.get('margin_usdt', 75))
+            if _quick_used >= _quick_total * 0.95:
+                return False
             if bool(self.config.get("execution_degraded", False)):
                 self.log_msg("执行容灾开启中，暂缓新开仓", "WARNING")
                 return False
@@ -5378,7 +5394,7 @@ class UltimateGridStrategy(threading.Thread):
                 min_amount = 0.0
             min_amount = float(min_amount)
             margin_total = float(self.config['margin_usdt'])
-            used_margin = self._estimate_used_margin_total(refresh_sec=8.0)
+            used_margin = self._estimate_used_margin_total(refresh_sec=0)
             available_margin = max(0.0, margin_total - used_margin)
             symbols_cfg = self.config.get('symbols', [])
             symbols_count = len(symbols_cfg) if isinstance(symbols_cfg, (list, tuple)) else 0
@@ -6031,7 +6047,13 @@ class UltimateGridStrategy(threading.Thread):
                                 except Exception:
                                     pass  # silent fallback
                             if side in ("buy", "sell") and amount > 0 and cancelled:
-                                self.place_market_order(side, amount, reason="timeout_convert", decision=decision)
+                                # 超时转市价前检查总保证金是否已超限
+                                _cur_used = self._estimate_used_margin_total(refresh_sec=0)
+                                _cur_total = float(self.config.get('margin_usdt', 75))
+                                if _cur_used >= _cur_total * 0.90:
+                                    self.log_msg(f"超时转市价前检查: 保证金已接近上限({_cur_used:.1f}/{_cur_total:.1f})，取消转市价", "WARNING")
+                                else:
+                                    self.place_market_order(side, amount, reason="timeout_convert", decision=decision)
                         if cancelled:
                             with self.pending_orders_lock:
                                 if order in self.pending_orders:
@@ -8585,6 +8607,7 @@ if __name__ == "__main__":
     except Exception as e:
         with open("error_ultimate.log", "w") as f:
             traceback.print_exc(file=f)
+
 
 
 
