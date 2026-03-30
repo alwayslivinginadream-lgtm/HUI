@@ -3573,6 +3573,8 @@ class SafetyMonitor(threading.Thread):
         self.last_rollback_ts = 0
         # ====== 日亏损熔断 ======
         self.daily_pnl = 0.0
+        self._daily_pnl_usdt = 0.0
+        self._total_pnl_usdt = 0.0
         self.daily_trade_count = 0
         self.daily_win_count = 0
         self.daily_loss_fused = False
@@ -3582,9 +3584,12 @@ class SafetyMonitor(threading.Thread):
     def record_trade_pnl(self, pnl_usdt):
         """记录一笔平仓盈亏，用于日亏损熔断"""
         with self._daily_pnl_lock:
-            self.daily_pnl += float(pnl_usdt)
+            pnl = float(pnl_usdt)
+            self.daily_pnl += pnl
+            self._daily_pnl_usdt += pnl
+            self._total_pnl_usdt += pnl
             self.daily_trade_count += 1
-            if float(pnl_usdt) > 0:
+            if pnl > 0:
                 self.daily_win_count += 1
 
     def is_daily_fused(self):
@@ -3736,6 +3741,7 @@ class UltimateGridStrategy(threading.Thread):
         self.position_mark_price = 0.0
         self.position_unrealized_pnl = 0.0
         self._last_close_ts = 0
+        self._last_close_pnl = 0.0
         self._last_cooldown_log_ts = 0
         self._symbol_loss_streak = 0
         self._symbol_streak_until = 0
@@ -4641,14 +4647,14 @@ class UltimateGridStrategy(threading.Thread):
             self.log_msg(f"槽位压力触发到手即走: occ={occ_ratio:.2f} roe={roe:.4f} best={best:.4f}", "WARNING")
             closed = self.close_all_positions(expected_price=price, reason="slot_take_and_run", slippage_estimate=slip_estimate)
             if closed:
-                self.record_exit_action("trail_exit")
+                self.record_exit_action("trail_exit", pnl_actual=getattr(self, "_last_close_pnl", None))
             self.last_slot_relief_ts = now
             return True
         if hold_sec >= max_hold_sec and roe >= min_roe_for_time:
             self.log_msg(f"槽位压力触发限时腾仓: occ={occ_ratio:.2f} hold={int(hold_sec)}s roe={roe:.4f}", "WARNING")
             closed = self.close_all_positions(expected_price=price, reason="slot_time_relief", slippage_estimate=slip_estimate)
             if closed:
-                self.record_exit_action("time_exit")
+                self.record_exit_action("time_exit", pnl_actual=getattr(self, "_last_close_pnl", None))
             self.last_slot_relief_ts = now
             return True
         return False
@@ -5133,7 +5139,7 @@ class UltimateGridStrategy(threading.Thread):
                     self.log_msg(f"【第4层】触发{stop_action}，平仓")
                     slip_estimate = self._get_dynamic_slip_estimate(atr, price)
                     if self.close_all_positions(expected_price=price, reason=stop_action, slippage_estimate=slip_estimate):
-                        self.record_exit_action(stop_action)
+                        self.record_exit_action(stop_action, pnl_actual=getattr(self, "_last_close_pnl", None))
                     else:
                         self.log_msg(f"【第4层】平仓未成功，跳过退出记录", "WARNING")
 
@@ -6087,7 +6093,7 @@ class UltimateGridStrategy(threading.Thread):
                         if closed:
                             ep = float(pos.get('entryPrice', pos.get('entry_price', 0)) or 0)
                             self.stop_loss.remove_position(self.symbol, entry_price=ep, side='buy' if side_pos == 'long' else 'sell')
-                            self.record_exit_action("time_exit")
+                            self.record_exit_action("time_exit", pnl_actual=getattr(self, "_last_close_pnl", None))
             self.last_funding_check = time.time()
         except Exception as e:
             self.log_msg(f"资金费率检查异常: {e}", "ERROR")
@@ -6156,8 +6162,10 @@ class UltimateGridStrategy(threading.Thread):
                         else:
                             pnl_quote = (ep - actual_exec) * abs(contracts) * contract_size_pos
                         fee_rate = float(self.config.get("taker_fee", 0.0005))
-                        pnl_quote -= abs(notional_entry) * fee_rate
+                        # 双边手续费: 开仓 + 平仓
+                        pnl_quote -= abs(notional_entry) * fee_rate * 2
                         self._record_realized_pnl(float(pnl_quote))
+                        self._last_close_pnl = float(pnl_quote)  # 记录供 record_exit_action 使用
                     except Exception:
                         pass  # silent fallback
                     ep = float(pos.get('entryPrice', pos.get('entry_price', 0)) or 0)
@@ -6353,21 +6361,25 @@ class UltimateGridStrategy(threading.Thread):
         self.running = False
         self.stop_reason = "manual_stop"
 
-    def record_exit_action(self, action):
+    def record_exit_action(self, action, pnl_actual=None):
         with self.exit_lock:
             self.last_exit = action
             if action == "stop_loss":
                 self.stop_loss_count += 1
         self.runtime_recent_exits.append(str(action))
-        mapping = {
-            "take_profit": 1.2,
-            "trail_exit": 0.8,
-            "ml_trend_exit": 0.6,
-            "breakeven_exit": 0.1,
-            "time_exit": -0.2,
-            "stop_loss": -1.0
-        }
-        outcome = float(mapping.get(action, -0.1))
+        # 根据实际盈亏判断胜负（优先使用传入值），回退到退出类型
+        if pnl_actual is not None and pnl_actual != 0:
+            outcome = 1.0 if pnl_actual > 0 else -1.0
+        else:
+            mapping = {
+                "take_profit": 1.0,
+                "trail_exit": 1.0,
+                "ml_trend_exit": 1.0,
+                "breakeven_exit": 1.0,
+                "time_exit": -1.0,
+                "stop_loss": -1.0
+            }
+            outcome = float(mapping.get(action, -1.0))
         self.performance_returns.append(outcome)
 
         # ML在线学习：用平仓结果反馈给ML预测器
@@ -7870,7 +7882,7 @@ class BotGUI:
         import urllib.request
         REPO_URL = "https://raw.githubusercontent.com/alwayslivinginadream-lgtm/HUI/main/2.py"
         # ★ 每次发版时更新此哈希值，防止供应链攻击
-        EXPECTED_SHA256 = ""  # 留空表示跳过校验（首次部署用），部署后填入真实哈希
+        EXPECTED_SHA256 = "AB70D930891F1DCBF72647EAAAE033AEA606002B1F11DECB5AF4FD7B71C58B71"
 
         def _do_update():
             try:
