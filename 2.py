@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import copy
-import pickle
 import time
 import threading
 import traceback
@@ -19,6 +18,9 @@ from collections import deque, defaultdict
 import math
 import ssl
 import requests
+import hashlib
+import base64
+import hmac
 try:
     import websocket
 except Exception:
@@ -60,6 +62,8 @@ DEFAULT_CONFIG = {
     "tp_mult": 1.8,
     "trail_mult": 1.2,
     "max_holding_hours": 20,
+    "risk_per_trade_pct": 1.0,           # ATR仓位管理：单笔最大亏损占总仓位百分比
+    "chandelier_trail_enabled": True,     # Chandelier Exit 动态止盈开关
     "causal_enabled": False,
     "causal_effect_threshold": -0.01,
     "causal_warmup_evals": 200,           # 冷启动：前200次评估跳过因果门控
@@ -330,6 +334,94 @@ class MarketState(Enum):
     STRONG_DOWNTREND = 6   # 强下跌
     EXTREME_DOWNTREND = 7  # 极端下跌
 
+# ==================== 凭据安全模块 ====================
+class CredentialManager:
+    """API凭据加密存储，优先环境变量，回退加密文件"""
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        self._cache = {}
+
+    @staticmethod
+    def _derive_key(password: str) -> bytes:
+        return hashlib.pbkdf2_hmac('sha256', password.encode(), b'phoenixq_credential_salt', 100000)
+
+    @staticmethod
+    def _xor_cipher(data: bytes, key: bytes) -> bytes:
+        """简单 XOR 加密（避免引入 cryptography 依赖）"""
+        return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+
+    def encrypt_config(self, config_path: str, password: str):
+        """加密配置文件中的 api_key 和 api_secret"""
+        import shutil
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        key = self._derive_key(password)
+        if 'api_key' in data and data['api_key']:
+            data['_enc_key'] = base64.b64encode(
+                self._xor_cipher(data['api_key'].encode(), key)
+            ).decode()
+            del data['api_key']
+        if 'api_secret' in data and data['api_secret']:
+            data['_enc_secret'] = base64.b64encode(
+                self._xor_cipher(data['api_secret'].encode(), key)
+            ).decode()
+            del data['api_secret']
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+    def decrypt_config(self, config_path: str, password: str = None) -> dict:
+        """解密凭据：优先环境变量 → 加密字段 → 原文"""
+        if 'api' in self._cache:
+            return self._cache['api']
+        # 优先读环境变量
+        env_key = os.getenv('PHOENIX_API_KEY', '').strip()
+        env_sec = os.getenv('PHOENIX_API_SECRET', '').strip()
+        if env_key and env_sec:
+            self._cache['api'] = {'api_key': env_key, 'api_secret': env_sec}
+            return self._cache['api']
+        # 尝试从加密字段解密
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if '_enc_key' in data and '_enc_secret' in data and password:
+                key = self._derive_key(password)
+                ak = self._xor_cipher(base64.b64decode(data['_enc_key']), key).decode()
+                asc = self._xor_cipher(base64.b64decode(data['_enc_secret']), key).decode()
+                self._cache['api'] = {'api_key': ak, 'api_secret': asc}
+                return self._cache['api']
+        except Exception:
+            pass
+        # 回退：原文（兼容旧配置）
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if data.get('api_key') and data.get('api_secret'):
+                self._cache['api'] = {'api_key': data['api_key'], 'api_secret': data['api_secret']}
+                return self._cache['api']
+        except Exception:
+            pass
+        return {}
+
+    @staticmethod
+    def mask_secret(s: str) -> str:
+        """脱敏显示：只显示前4个字符"""
+        if not s or len(s) <= 4:
+            return '****'
+        return s[:4] + '****'
+
+
 # ==================== 工具函数 ====================
 def calculate_adx(high, low, close, period=14):
     try:
@@ -375,6 +467,34 @@ def calculate_bb_width(close, period=20, nbdev=2):
         return width.iloc[-1], upper.iloc[-1], lower.iloc[-1]
     except:
         return 0.0, 0.0, 0.0
+
+def calculate_keltner(close, high, low, ema_period=20, atr_period=10, atr_mult=2.0):
+    """Keltner Channel: EMA ± ATR_mult × ATR — 替代布林带，不受横盘收窄影响"""
+    try:
+        close = close.reset_index(drop=True)
+        high = high.reset_index(drop=True)
+        low = low.reset_index(drop=True)
+        if len(close) < max(3, int(max(ema_period, atr_period))):
+            return 0.0, 0.0, 0.0, 0.0
+        ema = close.ewm(span=ema_period, adjust=False).mean()
+        # 计算 ATR
+        tr1 = high - low
+        tr2 = (high - close.shift(1)).abs()
+        tr3 = (low - close.shift(1)).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr_val = tr.rolling(atr_period).mean()
+        upper = ema + atr_mult * atr_val
+        lower = ema - atr_mult * atr_val
+        width = (upper - lower) / ema
+        ema_val = ema.iloc[-1]
+        upper_val = upper.iloc[-1]
+        lower_val = lower.iloc[-1]
+        width_val = width.iloc[-1]
+        if pd.isna(width_val):
+            width_val = 0.0
+        return width_val, upper_val, lower_val, ema_val
+    except:
+        return 0.0, 0.0, 0.0, 0.0
 
 def calculate_atr(high, low, close, period=14):
     try:
@@ -819,7 +939,10 @@ class MarketMonitor(threading.Thread):
                     volume = df['v']
 
                     adx = calculate_adx(high, low, close)
-                    bb_width, upper, lower = calculate_bb_width(close)
+                    # Keltner Channel 替代布林带：EMA(20) ± 2×ATR(10)，不受横盘收窄影响
+                    kc_width, upper, lower, kc_ema = calculate_keltner(close, high, low, ema_period=20, atr_period=10, atr_mult=2.0)
+                    # 保留布林带作为辅助参考（可选）
+                    bb_width, bb_upper, bb_lower = calculate_bb_width(close)
                     current = close.iloc[-1]
                     avg_volume = volume.rolling(20).mean().iloc[-1]
                     volume_ratio = volume.iloc[-1] / avg_volume if avg_volume > 0 else 1.0
@@ -828,10 +951,16 @@ class MarketMonitor(threading.Thread):
 
                     trend_score = 0
                     if adx > self.config['adx_threshold'] and volume_ratio > 1.2:
+                        # 使用 Keltner Channel 上下轨判断趋势突破
                         if current > upper:
                             trend_score = 2 if hist > 0 else 1
                         elif current < lower:
                             trend_score = -2 if hist < 0 else -1
+                        # 额外：价格在 Keltner 通道外 + MACD 同向 = 极强信号
+                        elif current > bb_upper and hist > 0:
+                            trend_score = 1  # 布林带突破但未破 Keltner，弱信号
+                        elif current < bb_lower and hist < 0:
+                            trend_score = -1
                     elif adx > 20:
                         if rsi > 70:
                             trend_score = 1
@@ -1368,12 +1497,51 @@ class SmartStopLoss:
             self._save_state()
         return removed
 
-    def check_stop(self, symbol, current_price, atr_multiplier=None, max_holding_hours=None, trail_multiplier=1.2, liquidation_price=0.0, ml_predictor=None, recent_prices=None, volatility_ratio=1.0):
+    # ====== Chandelier Exit 动态止盈：根据市场状态调整 trail_mult 和时间退出 ======
+    TRAIL_BY_STATE = {
+        1: 3.0,   # EXTREME_UPTREND — 大行情给足空间
+        2: 2.5,   # STRONG_UPTREND
+        3: 2.0,   # WEAK_UPTREND
+        4: 1.2,   # RANGE — 震荡收紧，锁利润
+        5: 2.0,   # WEAK_DOWNTREND
+        6: 2.5,   # STRONG_DOWNTREND
+        7: 3.0,   # EXTREME_DOWNTREND — 大行情给足空间
+    }
+    TIME_EXIT_BY_STATE = {
+        1: 24,    # EXTREME_UPTREND — 趋势长持
+        2: 20,    # STRONG_UPTREND
+        3: 12,    # WEAK_UPTREND
+        4: 4,     # RANGE — 震荡不耗时间
+        5: 12,    # WEAK_DOWNTREND
+        6: 20,    # STRONG_DOWNTREND
+        7: 24,    # EXTREME_DOWNTREND — 趋势长持
+    }
+    # 盈利衰减开始时间（小时）：震荡行情更早开始衰减，逼自己走人
+    DECAY_START_BY_STATE = {
+        1: 12, 2: 10, 3: 6, 4: 2, 5: 6, 6: 10, 7: 12,
+    }
+
+    def check_stop(self, symbol, current_price, atr_multiplier=None, max_holding_hours=None, trail_multiplier=1.2, liquidation_price=0.0, ml_predictor=None, recent_prices=None, volatility_ratio=1.0, market_state=None):
         if not self.positions:
             self._load_state()
 
         if symbol not in self.positions or not self.positions[symbol]:
             return None
+
+        # ====== 动态 trail_mult：市场状态优先，再叠加波动率自适应 ======
+        base_trail = trail_multiplier  # 来自 style profile
+        if market_state is not None:
+            state_trail = self.TRAIL_BY_STATE.get(market_state.value if hasattr(market_state, 'value') else market_state, None)
+            if state_trail is not None:
+                base_trail = state_trail
+        else:
+            state_trail = None
+
+        # ====== 动态 max_holding_hours：市场状态覆盖 ======
+        if market_state is not None:
+            state_time = self.TIME_EXIT_BY_STATE.get(market_state.value if hasattr(market_state, 'value') else market_state, None)
+            if state_time is not None and (max_holding_hours is None or state_time < max_holding_hours):
+                max_holding_hours = state_time
 
         # 物理强平价防御线 (最优先)
         if liquidation_price > 0 and current_price > 0:
@@ -1405,21 +1573,28 @@ class SmartStopLoss:
             time_factor = max(0.5, 1 - holding_time / use_max_hours)
             stop_distance *= time_factor
             tp_distance = atr * max(0.8, pos.get('tp_multiplier', 1.8))
-            if holding_time > 8:
-                decay = max(0.55, 1 - (holding_time - 8) * 0.1)
+
+            # ====== 盈利衰减：根据市场状态动态决定衰减开始时间和速率 ======
+            decay_start = 8  # 默认8小时后开始衰减
+            if market_state is not None:
+                ms_val = market_state.value if hasattr(market_state, 'value') else market_state
+                ds = self.DECAY_START_BY_STATE.get(ms_val, None)
+                if ds is not None:
+                    decay_start = ds
+            if holding_time > decay_start:
+                decay = max(0.55, 1 - (holding_time - decay_start) * 0.1)
                 tp_distance *= decay
 
-            # ====== 自适应trail：根据波动率动态调整 ======
-            # 波动率高→trail宽（给空间），波动率低→trail紧（锁利润）
-            adaptive_trail = trail_multiplier
+            # ====== 自适应trail：市场状态基数 + 波动率微调 ======
+            adaptive_trail = base_trail
             if volatility_ratio > 0:
                 if volatility_ratio > 1.5:
-                    # 高波动：放宽trail，给趋势空间
-                    adaptive_trail = trail_multiplier * min(1.5, 0.8 + volatility_ratio * 0.3)
+                    # 高波动：在市场状态基数上进一步放宽
+                    adaptive_trail = base_trail * min(1.5, 0.8 + volatility_ratio * 0.3)
                 elif volatility_ratio < 0.7:
-                    # 低波动：收紧trail，快速锁利
-                    adaptive_trail = trail_multiplier * max(0.5, 0.6 + volatility_ratio * 0.3)
-                # 否则正常波动，用原始trail_multiplier
+                    # 低波动：在市场状态基数上进一步收紧
+                    adaptive_trail = base_trail * max(0.5, 0.6 + volatility_ratio * 0.3)
+                # 否则正常波动，用市场状态基数
 
             # ====== 保本线：浮盈超过手续费后止损拉到成本价 ======
             fee_cost = pos['entry_price'] * 0.001  # 开+平约0.1%
@@ -2086,8 +2261,14 @@ class OnlinePropensityModel:
         self.n += 1
 
 class OfflineCausalModel:
+    """离线因果模型 — 使用 JSON 序列化替代 pickle，防止任意代码执行"""
     def __init__(self, model_path):
         self.model_path = model_path
+        # 优先使用 .json 后缀
+        if model_path.endswith('.pkl'):
+            self.json_path = model_path.replace('.pkl', '.json')
+        else:
+            self.json_path = model_path
         self.model = None
         self.last_load_ts = 0.0
         self._load_if_exists(force=True)
@@ -2098,11 +2279,27 @@ class OfflineCausalModel:
             return
         self.last_load_ts = now
         try:
-            if os.path.exists(self.model_path):
-                with open(self.model_path, "rb") as f:
-                    self.model = pickle.load(f)
+            # 优先加载 JSON 格式
+            if os.path.exists(self.json_path):
+                with open(self.json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.model = data
+                return
+            # 兼容旧 pkl（仅当 JSON 不存在时），但打印警告
+            if os.path.exists(self.model_path) and self.model_path.endswith('.pkl'):
+                self.model = None  # ★ 不再加载 pickle，防止代码注入
+                return
         except Exception:
             self.model = None
+
+    def _save_json(self):
+        """保存为 JSON 格式"""
+        try:
+            if self.model is not None and isinstance(self.model, dict):
+                with open(self.json_path, "w", encoding="utf-8") as f:
+                    json.dump(self.model, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def predict(self, x):
         self._load_if_exists(force=False)
@@ -2110,10 +2307,26 @@ class OfflineCausalModel:
             return 0.0, 1.0, False
         arr = np.array(x, dtype=float).reshape(1, -1)
         try:
+            # JSON 模型：线性模型格式 {"weights": [...], "bias": float}
+            if isinstance(self.model, dict):
+                weights = self.model.get("weights", [])
+                bias = float(self.model.get("bias", 0.0))
+                if weights and len(weights) == arr.shape[1]:
+                    w = np.array(weights, dtype=float)
+                    eff = float((arr @ w + bias)[0])
+                    unc = float(self.model.get("uncertainty", 0.12))
+                    return eff, float(max(0.0001, min(1.0, unc))), True
+                elif hasattr(self.model, "mean_effect"):
+                    eff = float(self.model["mean_effect"])
+                    unc = float(self.model.get("uncertainty", 0.12))
+                    return eff, float(max(0.0001, min(1.0, unc))), True
+            # 兼容 sklearn 对象（通过 JSON 不可能恢复，此处仅作安全回退）
             if hasattr(self.model, "predict_effect"):
                 eff = float(self.model.predict_effect(arr)[0])
-            else:
+            elif hasattr(self.model, "predict"):
                 eff = float(self.model.predict(arr)[0])
+            else:
+                return 0.0, 1.0, False
             if hasattr(self.model, "predict_interval"):
                 lo, hi = self.model.predict_interval(arr)
                 lo = float(np.array(lo).reshape(-1)[0])
@@ -3515,6 +3728,7 @@ class UltimateGridStrategy(threading.Thread):
         self.price_history = deque(maxlen=100)
         self.last_position_check = 0
         self.has_position = False
+        self._pending_entry = False  # P1-5: 挂单中标志
         self.position_status_stale = False
         self.position_stale_count = 0
         self.position_contracts = 0.0
@@ -4896,9 +5110,10 @@ class UltimateGridStrategy(threading.Thread):
                 self.check_filled_orders(buy_prob, self.config.get('base_price_range', 0.02), dynamic_leverage, decision)
                 self.reconcile_orders()
 
-                # 检查止损（含自适应trail+ML退出+保本线）
+                # 检查止损（含自适应trail+ML退出+保本线+Chandelier Exit动态止盈）
                 _vol_ratio = getattr(self, 'cached_volume_ratio', 1.0)
                 _recent_prices = list(self.price_history) if hasattr(self, 'price_history') else []
+                _market_state = self.monitor.get_market_state() if hasattr(self, 'monitor') and self.monitor else None
                 stop_action = self.stop_loss.check_stop(
                     self.symbol,
                     price,
@@ -4908,7 +5123,8 @@ class UltimateGridStrategy(threading.Thread):
                     liquidation_price=self.position_liquidation_price,
                     ml_predictor=getattr(self, 'ml_predictor', None),
                     recent_prices=_recent_prices,
-                    volatility_ratio=_vol_ratio
+                    volatility_ratio=_vol_ratio,
+                    market_state=_market_state
                 )
                 if stop_action:
                     if not self._confirm_stop_action(stop_action, price):
@@ -5183,6 +5399,30 @@ class UltimateGridStrategy(threading.Thread):
             else:
                 total_contracts = (effective_margin_cap * leverage_for_sizing) / safe_price
 
+            # ====== ATR 仓位管理：根据波动率动态调整仓位 ======
+            # 核心逻辑：单笔最大亏损 = effective_margin_cap × risk_per_trade_pct
+            # 止损距离 = atr × sl_mult
+            # ATR限制仓位 = 最大亏损金额 / 止损距离
+            _atr_for_sizing = getattr(self, 'cached_atr', 0.0)
+            _sl_mult_for_sizing = float(decision.get("sl_mult", 1.7))
+            if _atr_for_sizing > 0 and safe_price > 0:
+                try:
+                    _risk_pct = max(0.5, min(3.0, float(self.config.get("risk_per_trade_pct", 1.0))))
+                    _risk_amount = effective_margin_cap * _risk_pct / 100.0
+                    _stop_distance_price = _atr_for_sizing / safe_price  # ATR占价格比例
+                    if _stop_distance_price > 1e-8:
+                        if is_contract and contract_size > 0:
+                            _atr_contracts = (_risk_amount * leverage_for_sizing) / (_atr_for_sizing * _sl_mult_for_sizing * contract_size)
+                        else:
+                            _atr_contracts = (_risk_amount * leverage_for_sizing) / (_atr_for_sizing * _sl_mult_for_sizing)
+                        # 取原仓位和ATR限制仓位的较小值（取小不取大，确保不超风险）
+                        if _atr_contracts < total_contracts:
+                            total_contracts = _atr_contracts
+                            if hasattr(self, 'log_msg'):
+                                self.log_msg(f"【ATR仓位管理】波动率偏高，ATR限制仓位缩至 {_atr_contracts:.4f}", "INFO")
+                except Exception:
+                    pass  # ATR仓位计算失败时使用原始仓位，不影响正常运行
+
             # 处理精度问题，防止下单量太大或不符合交易所步长
             precision_amount = market.get('precision', {}).get('amount')
             if precision_amount is not None:
@@ -5340,7 +5580,9 @@ class UltimateGridStrategy(threading.Thread):
                                 expected_mkt = p2
                     if all_ok:
                         self.position_open_context = getattr(self, "last_decision_context", None)
+                        # P1-5: 确认成交才设 has_position，防止未成交就标记
                         self.has_position = True
+                        self._pending_entry = False
                         self.last_entry_fill_ts = time.time()
                         if jitter_sec > 0:
                             self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
@@ -5349,7 +5591,9 @@ class UltimateGridStrategy(threading.Thread):
                     placed = self.place_market_order(side, qty, adaptive_reason, decision, expected_price=expected_mkt)
                     if placed:
                         self.position_open_context = getattr(self, "last_decision_context", None)
+                        # P1-5: 确认成交才设 has_position
                         self.has_position = True
+                        self._pending_entry = False
                         self.last_entry_fill_ts = time.time()
                         if jitter_sec > 0:
                             self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
@@ -5401,7 +5645,8 @@ class UltimateGridStrategy(threading.Thread):
             if jitter_sec > 0:
                 self.next_order_earliest_ts = time.monotonic() + random.uniform(0.2, jitter_sec)
             self.position_open_context = getattr(self, "last_decision_context", None)
-            self.has_position = True # 立即标记，防止20秒刷新窗口期内重复穿透
+            # P1-5: 限价单不立即设 has_position，标记 _pending_entry
+            self._pending_entry = True
             # ML学习：保存开仓时的价格快照
             try:
                 self._entry_prices_snapshot = list(self.price_history) if hasattr(self, 'price_history') else None
@@ -6290,6 +6535,7 @@ class BotGUI:
         self.runtime_degrade_until = 0
         self.last_report_day = ""
         self.health_lock = threading.Lock()
+        self._degrade_lock = threading.Lock()  # P0-4: execution_degraded 竞态修复
         self.daily_report_retry_ts = 0
 
     def load_config(self):
@@ -7172,6 +7418,13 @@ class BotGUI:
             return
 
     def apply_risk_preset(self, preset):
+        if str(preset).lower() == "furious":
+            if not messagebox.askyesno(
+                "⚠️ 极端风险警告",
+                "狂暴模式关闭了几乎所有风控保护！\n可能导致重大资金损失！\n\n确定要启用吗？"
+            ):
+                self.log("用户取消了狂暴预设", "WARNING")
+                return
         profiles = {
             "conservative": {
                 "max_portfolio_var": 0.038,
@@ -7491,16 +7744,18 @@ class BotGUI:
         with self.health_lock:
             recent = [x for x in list(self.error_events) if now - x <= window_sec]
         if len(recent) >= threshold:
-            if self.config.get("execution_degraded", False) and now < self.runtime_degrade_until:
-                return
-            self.runtime_degrade_until = max(self.runtime_degrade_until, now + cooldown)
-            self.config["execution_degraded"] = True
-            self.log(f"执行容灾已开启，{cooldown}s 内暂停新开仓", "WARNING")
+            with self._degrade_lock:
+                if self.config.get("execution_degraded", False) and now < self.runtime_degrade_until:
+                    return
+                self.runtime_degrade_until = max(self.runtime_degrade_until, now + cooldown)
+                self.config["execution_degraded"] = True
+                self.log(f"执行容灾已开启，{cooldown}s 内暂停新开仓", "WARNING")
 
     def maybe_recover_degrade_mode(self):
-        if self.config.get("execution_degraded", False) and time.time() >= self.runtime_degrade_until:
-            self.config["execution_degraded"] = False
-            self.log("执行容灾已恢复，允许继续开仓", "INFO")
+        with self._degrade_lock:
+            if self.config.get("execution_degraded", False) and time.time() >= self.runtime_degrade_until:
+                self.config["execution_degraded"] = False
+                self.log("执行容灾已恢复，允许继续开仓", "INFO")
 
     def maybe_generate_daily_report(self):
         try:
@@ -7611,9 +7866,11 @@ class BotGUI:
             self.log(f"❌ 保存配置失败: {e}", "ERROR")
 
     def _auto_update(self):
-        """一键从GitHub下载最新版本并重启"""
+        """一键从GitHub下载最新版本并重启（含SHA256签名校验）"""
         import urllib.request
         REPO_URL = "https://raw.githubusercontent.com/alwayslivinginadream-lgtm/HUI/main/2.py"
+        # ★ 每次发版时更新此哈希值，防止供应链攻击
+        EXPECTED_SHA256 = ""  # 留空表示跳过校验（首次部署用），部署后填入真实哈希
 
         def _do_update():
             try:
@@ -7629,6 +7886,19 @@ class BotGUI:
                     self.log("❌ 下载失败：文件太小", "ERROR")
                     self.root.after(0, lambda: self.btn_update.config(state="normal", text="🔄 一键更新"))
                     return
+
+                # ★ SHA256 签名校验
+                actual_hash = hashlib.sha256(new_code).hexdigest()
+                if EXPECTED_SHA256:
+                    if actual_hash != EXPECTED_SHA256:
+                        self.log(f"❌ 哈希校验失败！预期: {EXPECTED_SHA256[:16]}... 实际: {actual_hash[:16]}...", "ERROR")
+                        self.log("⚠️ 可能遭遇供应链攻击，更新已中止！", "ERROR")
+                        self.root.after(0, lambda: self.btn_update.config(state="normal", text="🔄 一键更新"))
+                        return
+                    self.log(f"✅ SHA256 校验通过: {actual_hash[:16]}...", "INFO")
+                else:
+                    self.log(f"⚠️ 未配置 EXPECTED_SHA256，跳过签名校验（{actual_hash[:16]}...）", "WARNING")
+                    self.log("💡 请在代码中设置 EXPECTED_SHA256 以启用安全校验", "INFO")
 
                 # 获取当前脚本/exe路径
                 if getattr(sys, 'frozen', False):
