@@ -4736,7 +4736,7 @@ class UltimateGridStrategy(threading.Thread):
                 self.log_msg("初始化配置因鉴权失败被阻断，策略线程安全退出", "ERROR")
                 return
             self.log_msg("初始化配置失败或降级，继续执行", "WARNING")
-        self.log_msg("【第18层+全局调度】终极网格策略启动")
+        self.log_msg("【第18层+全局调度】多层自适应信号引擎启动")
         if bool(self.config.get("ws_enabled", True)):
             if websocket is None:
                 self.log_msg("WS模块不可用，自动降级REST", "WARNING")
