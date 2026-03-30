@@ -632,6 +632,17 @@ class GlobalScheduler:
             self.last_seen[symbol] = time.monotonic()
             self.active_symbols.add(symbol)
 
+    def record_pending(self, symbol):
+        """挂单时也占槽位，防止并发超额"""
+        with self.lock:
+            self.last_seen[symbol] = time.monotonic()
+            self.active_symbols.add(symbol)
+
+    def cancel_pending(self, symbol):
+        """挂单取消或成交后释放槽位（成交后应用record_fill重新标记）"""
+        with self.lock:
+            self.active_symbols.discard(symbol)
+
     def release_symbol(self, symbol):
         with self.lock:
             self.active_symbols.discard(symbol)
@@ -5669,6 +5680,9 @@ class UltimateGridStrategy(threading.Thread):
                 order["_fallback_market"] = bool(timeout_sec > 0 and price_type in ("aggressive_limit", "limit"))
                 with self.pending_orders_lock:
                     self.pending_orders.append(order)
+                # 挂单时占槽位
+                if self.scheduler:
+                    self.scheduler.record_pending(self.symbol)
             else:
                 self.log_msg("下单返回缺少订单ID，已跳过本地挂单跟踪", "WARNING")
             self.last_order_ts = time.time()
@@ -5822,7 +5836,7 @@ class UltimateGridStrategy(threading.Thread):
             self.log_msg(f"获取持仓状态异常: {e}", "DEBUG")
             self.position_status_stale = True
 
-    def _estimate_used_margin_total(self, refresh_sec=8.0):
+    def _estimate_used_margin_total(self, refresh_sec=3.0):
         now = time.time()
         if now - float(self.margin_used_cache_ts) < max(1.0, float(refresh_sec)):
             return max(0.0, float(self.margin_used_cache))
@@ -5860,6 +5874,20 @@ class UltimateGridStrategy(threading.Thread):
                         if ep > 0 and real_leverage > 0:
                             contract_size = float(p.get('contractSize', p.get('info', {}).get('quanto_multiplier', 1)) or 1)
                             used += (contracts * contract_size * ep) / max(1e-8, real_leverage)
+            # ====== 挂单保证金也计入已用额度 ======
+            try:
+                with self.pending_orders_lock:
+                    for o in self.pending_orders:
+                        try:
+                            o_qty = float(o.get('amount', 0))
+                            o_price = float(o.get('price', 0))
+                            o_lev = max(1, int(self.config.get('leverage', 3)))
+                            if o_qty > 0 and o_price > 0:
+                                used += (o_qty * o_price) / o_lev
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             self.margin_used_cache = max(0.0, float(used))
             self.margin_used_cache_ts = now
         except Exception:
@@ -6025,6 +6053,8 @@ class UltimateGridStrategy(threading.Thread):
                         if order in self.pending_orders:
                             self.pending_orders.remove(order)
                     self.log_msg(f"订单已失效/取消 ({status})")
+                    if self.scheduler and not self.has_position:
+                        self.scheduler.cancel_pending(self.symbol)
                     # ==== 触发重进逻辑 ====
                     try:
                         timeout_limit = order.get("_timeout", 0)
@@ -8555,6 +8585,7 @@ if __name__ == "__main__":
     except Exception as e:
         with open("error_ultimate.log", "w") as f:
             traceback.print_exc(file=f)
+
 
 
 
