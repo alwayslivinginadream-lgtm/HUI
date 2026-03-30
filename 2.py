@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import json
 import copy
@@ -58,10 +58,10 @@ DEFAULT_CONFIG = {
     "buy_open": 0.60,
     "sell_open": 0.40,
     "min_score": 0.10,
-    "sl_mult": 1.7,
-    "tp_mult": 1.8,
-    "trail_mult": 1.2,
-    "max_holding_hours": 20,
+    "sl_mult": 2.5,
+    "tp_mult": 2.5,
+    "trail_mult": 1.8,
+    "max_holding_hours": 12,
     "risk_per_trade_pct": 1.0,           # ATR仓位管理：单笔最大亏损占总仓位百分比
     "chandelier_trail_enabled": True,     # Chandelier Exit 动态止盈开关
     "causal_enabled": False,
@@ -2902,9 +2902,9 @@ class EvolutionEngine(threading.Thread):
         self.backup_dir = "params_backup"
         self.evolve_round = 0
         self.shadow_style_profiles = {
-            "保守": {"buy_open": 0.58, "sell_open": 0.42, "min_score": 0.08, "sl_mult": 1.3, "tp_mult": 1.2, "trail_mult": 0.9, "lev_scale": 0.7},
-            "均衡": {"buy_open": 0.55, "sell_open": 0.45, "min_score": 0.06, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2, "lev_scale": 1.0},
-            "激进": {"buy_open": 0.52, "sell_open": 0.48, "min_score": 0.04, "sl_mult": 2.2, "tp_mult": 2.5, "trail_mult": 1.7, "lev_scale": 1.25}
+            "保守": {"buy_open": 0.58, "sell_open": 0.42, "min_score": 0.08, "sl_mult": 2.0, "tp_mult": 2.0, "trail_mult": 1.5, "lev_scale": 0.7},
+            "均衡": {"buy_open": 0.55, "sell_open": 0.45, "min_score": 0.06, "sl_mult": 2.5, "tp_mult": 2.5, "trail_mult": 1.8, "lev_scale": 1.0},
+            "激进": {"buy_open": 0.52, "sell_open": 0.48, "min_score": 0.04, "sl_mult": 3.0, "tp_mult": 3.0, "trail_mult": 2.2, "lev_scale": 1.25}
         }
         self.shadow_decider = CausalDecisionEngine(self.shadow_style_profiles, self.get_config())
         os.makedirs(self.backup_dir, exist_ok=True)
@@ -3206,7 +3206,7 @@ class EvolutionEngine(threading.Thread):
         try:
             decision = self._compute_shadow_decision(params, ret, state, probe)
         except Exception:
-            decision = {"entry_allowed": False, "side": None, "reason": "shadow_error", "details": {}, "lev_scale": 1.0, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2}
+            decision = {"entry_allowed": False, "side": None, "reason": "shadow_error", "details": {}, "lev_scale": 1.0, "sl_mult": 2.5, "tp_mult": 2.5, "trail_mult": 1.8}
         try:
             d = decision.get("details", {})
             probe["causal_effects"].append(float(d.get("causal_effect", 0.0)))
@@ -3820,9 +3820,9 @@ class UltimateGridStrategy(threading.Thread):
         self.orderbook_cache = None
         self.orderbook_cache_ts = 0.0
         self.style_profiles = {
-            "保守": {"buy_open": 0.58, "sell_open": 0.42, "min_score": 0.08, "sl_mult": 1.3, "tp_mult": 1.2, "trail_mult": 0.9, "lev_scale": 0.7},
-            "均衡": {"buy_open": 0.55, "sell_open": 0.45, "min_score": 0.06, "sl_mult": 1.7, "tp_mult": 1.8, "trail_mult": 1.2, "lev_scale": 1.0},
-            "激进": {"buy_open": 0.52, "sell_open": 0.48, "min_score": 0.04, "sl_mult": 2.2, "tp_mult": 2.5, "trail_mult": 1.7, "lev_scale": 1.25}
+            "保守": {"buy_open": 0.58, "sell_open": 0.42, "min_score": 0.08, "sl_mult": 2.0, "tp_mult": 2.0, "trail_mult": 1.5, "lev_scale": 0.7},
+            "均衡": {"buy_open": 0.55, "sell_open": 0.45, "min_score": 0.06, "sl_mult": 2.5, "tp_mult": 2.5, "trail_mult": 1.8, "lev_scale": 1.0},
+            "激进": {"buy_open": 0.52, "sell_open": 0.48, "min_score": 0.04, "sl_mult": 3.0, "tp_mult": 3.0, "trail_mult": 2.2, "lev_scale": 1.25}
         }
         self.apply_tunable_params(config)
         self.causal_engine = CausalDecisionEngine(
@@ -7882,7 +7882,7 @@ class BotGUI:
         import urllib.request
         REPO_URL = "https://raw.githubusercontent.com/alwayslivinginadream-lgtm/HUI/main/2.py"
         # ★ 每次发版时更新此哈希值，防止供应链攻击
-        EXPECTED_SHA256 = "AB70D930891F1DCBF72647EAAAE033AEA606002B1F11DECB5AF4FD7B71C58B71"
+        EXPECTED_SHA256 = "D255F65E5F1A74C62A381A58BD0224152C5C3E678957C9F48DC32C0935729AA9"
 
         def _do_update():
             try:
@@ -8483,3 +8483,4 @@ if __name__ == "__main__":
     except Exception as e:
         with open("error_ultimate.log", "w") as f:
             traceback.print_exc(file=f)
+
