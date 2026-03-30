@@ -1508,17 +1508,17 @@ class SmartStopLoss:
         7: 3.0,   # EXTREME_DOWNTREND — 大行情给足空间
     }
     TIME_EXIT_BY_STATE = {
-        1: 24,    # EXTREME_UPTREND — 趋势长持
-        2: 20,    # STRONG_UPTREND
-        3: 12,    # WEAK_UPTREND
-        4: 4,     # RANGE — 震荡不耗时间
-        5: 12,    # WEAK_DOWNTREND
-        6: 20,    # STRONG_DOWNTREND
-        7: 24,    # EXTREME_DOWNTREND — 趋势长持
+        1: 48,    # EXTREME_UPTREND — 趋势长持
+        2: 36,    # STRONG_UPTREND
+        3: 24,    # WEAK_UPTREND
+        4: 12,    # RANGE — 震荡也给足时间
+        5: 24,    # WEAK_DOWNTREND
+        6: 36,    # STRONG_DOWNTREND
+        7: 48,    # EXTREME_DOWNTREND — 趋势长持
     }
     # 盈利衰减开始时间（小时）：震荡行情更早开始衰减，逼自己走人
     DECAY_START_BY_STATE = {
-        1: 12, 2: 10, 3: 6, 4: 2, 5: 6, 6: 10, 7: 12,
+        1: 18, 2: 14, 3: 10, 4: 6, 5: 10, 6: 14, 7: 18,  # 延后衰减开始时间
     }
 
     def check_stop(self, symbol, current_price, atr_multiplier=None, max_holding_hours=None, trail_multiplier=1.2, liquidation_price=0.0, ml_predictor=None, recent_prices=None, volatility_ratio=1.0, market_state=None):
@@ -1570,7 +1570,8 @@ class SmartStopLoss:
             atr = pos['atr']
             side = pos.get('side', 'buy')
             stop_distance = atr * use_atr_multiplier
-            time_factor = max(0.5, 1 - holding_time / use_max_hours)
+            # 止损时间衰减：大幅减弱，避免持仓越久越容易被噪音打掉
+            time_factor = max(0.85, 1 - holding_time / (use_max_hours * 3))
             stop_distance *= time_factor
             tp_distance = atr * max(0.8, pos.get('tp_multiplier', 1.8))
 
@@ -1582,7 +1583,8 @@ class SmartStopLoss:
                 if ds is not None:
                     decay_start = ds
             if holding_time > decay_start:
-                decay = max(0.55, 1 - (holding_time - decay_start) * 0.1)
+                # 止盈衰减大幅减弱：每小时只缩3%，最低保底80%
+                decay = max(0.80, 1 - (holding_time - decay_start) * 0.03)
                 tp_distance *= decay
 
             # ====== 自适应trail：市场状态基数 + 波动率微调 ======
@@ -7882,7 +7884,7 @@ class BotGUI:
         import urllib.request
         REPO_URL = "https://raw.githubusercontent.com/alwayslivinginadream-lgtm/HUI/main/2.py"
         # ★ 每次发版时更新此哈希值，防止供应链攻击
-        EXPECTED_SHA256 = "D255F65E5F1A74C62A381A58BD0224152C5C3E678957C9F48DC32C0935729AA9"
+        EXPECTED_SHA256 = "C20DEDA4FDCFB1DC9F3408F07279A3C6BA0752DA3BABEA5DB684A7B2821F08B4"
 
         def _do_update():
             try:
@@ -8483,4 +8485,5 @@ if __name__ == "__main__":
     except Exception as e:
         with open("error_ultimate.log", "w") as f:
             traceback.print_exc(file=f)
+
 
