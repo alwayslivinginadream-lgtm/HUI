@@ -1419,8 +1419,8 @@ class VolatilityAdapter:
         raw = self.base_leverage * self.target_volatility / current_vol
         if not math.isfinite(raw):
             return self.current_leverage
-        # 杠杆自适应：低波动可提高，但封顶不超过base*2
-        self.current_leverage = max(1, min(self.base_leverage * 2, int(raw)))
+        # 杠杆自适应：仅允许降低杠杆（高波动降风险），不允许超过用户设定的 base_leverage
+        self.current_leverage = max(1, min(self.base_leverage, int(raw)))
         return self.current_leverage
 
 # ==================== 第4层：智能止损止盈 ====================
@@ -3372,7 +3372,7 @@ class EvolutionEngine(threading.Thread):
     def _backup_current(self, candidates):
         cfg = self.get_config()
         payload = {
-            "version": "v21",
+            "version": "v22",
             "backup_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "current_tunable": self._get_base_params(),
             "candidate_count": len(candidates),
@@ -6548,7 +6548,7 @@ class UltimateGridStrategy(threading.Thread):
 class BotGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PhoenixQ V1.2.1 // 凤凰量化交易系统")
+        self.root.title("PhoenixQ V1.2.2 // 凤凰量化交易系统")
         self.root.geometry("1200x900")
         # PhoenixQ 主题 - 暖金+深灰，凤凰涅槃感
         self.colors = {
@@ -7010,7 +7010,7 @@ class BotGUI:
         header = tk.Frame(self.root, bg="#0f1528", height=55)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="🔥 PhoenixQ V1.2.1 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
+        tk.Label(header, text="🔥 PhoenixQ V1.2.2 // 凤凰量化交易系统", font=("Consolas", 15, "bold"), bg="#0f1528", fg=ACCENT).pack(side="left", padx=16)
         self.lbl_status = tk.Label(header, text="SYSTEM READY", font=("Consolas", 11, "bold"), bg="#0f1528", fg=SUCCESS)
         self.lbl_status.pack(side="right", padx=16)
         self.lbl_health = tk.Label(header, text="WARN:0 ERR:0", font=("Consolas", 10), bg="#0f1528", fg=WARNING)
@@ -8550,6 +8550,7 @@ if __name__ == "__main__":
     except Exception as e:
         with open("error_ultimate.log", "w") as f:
             traceback.print_exc(file=f)
+
 
 
 
