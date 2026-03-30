@@ -1627,19 +1627,21 @@ class SmartStopLoss:
                     triggered_action = 'take_profit'
                 elif ml_exit and current_price > pos['entry_price'] + fee_cost:
                     triggered_action = 'ml_trend_exit'
-                elif current_price <= pos['best_price'] - atr * max(0.5, adaptive_trail):
-                    triggered_action = 'trail_exit'
                 elif breakeven_active:
-                    # 阶梯锁利：浮盈越多，保护越高
+                    # 阶梯锁利：浮盈越多，保护越高（保本线优先于追踪止损）
                     peak_profit = pos['best_price'] - pos['entry_price']
-                    if peak_profit > fee_cost * 3:
-                        # 浮盈>3倍手续费：锁住50%利润
-                        protect_price = pos['entry_price'] + peak_profit * 0.5
+                    if peak_profit >= pos['entry_price'] * 0.02:
+                        protect_price = pos['entry_price'] + peak_profit * 0.70
+                    elif peak_profit >= pos['entry_price'] * 0.01:
+                        protect_price = pos['entry_price'] + peak_profit * 0.50
+                    elif peak_profit > fee_cost * 3:
+                        protect_price = pos['entry_price'] + peak_profit * 0.50
                     else:
-                        # 刚过保本线：保住成本
-                        protect_price = pos['entry_price'] + fee_cost * 0.3
+                        protect_price = pos['entry_price'] + fee_cost * 0.5
                     if current_price <= protect_price:
                         triggered_action = 'breakeven_exit'
+                elif current_price <= pos['best_price'] - atr * max(0.5, adaptive_trail):
+                    triggered_action = 'trail_exit'
                 elif current_price < pos['entry_price'] - stop_distance:
                     triggered_action = 'stop_loss'
             else:
@@ -1648,19 +1650,21 @@ class SmartStopLoss:
                     triggered_action = 'take_profit'
                 elif ml_exit and current_price < pos['entry_price'] - fee_cost:
                     triggered_action = 'ml_trend_exit'
-                elif current_price >= pos['best_price'] + atr * max(0.5, adaptive_trail):
-                    triggered_action = 'trail_exit'
                 elif breakeven_active:
-                    # 阶梯锁利：浮盈越多，保护越高
+                    # 阶梯锁利：浮盈越多，保护越高（保本线优先于追踪止损）
                     peak_profit = pos['entry_price'] - pos['best_price']
-                    if peak_profit > fee_cost * 3:
-                        # 浮盈>3倍手续费：锁住50%利润
-                        protect_price = pos['entry_price'] - peak_profit * 0.5
+                    if peak_profit >= pos['entry_price'] * 0.02:
+                        protect_price = pos['entry_price'] - peak_profit * 0.70
+                    elif peak_profit >= pos['entry_price'] * 0.01:
+                        protect_price = pos['entry_price'] - peak_profit * 0.50
+                    elif peak_profit > fee_cost * 3:
+                        protect_price = pos['entry_price'] - peak_profit * 0.50
                     else:
-                        # 刚过保本线：保住成本
-                        protect_price = pos['entry_price'] - fee_cost * 0.3
+                        protect_price = pos['entry_price'] - fee_cost * 0.5
                     if current_price >= protect_price:
                         triggered_action = 'breakeven_exit'
+                elif current_price >= pos['best_price'] + atr * max(0.5, adaptive_trail):
+                    triggered_action = 'trail_exit'
                 elif current_price > pos['entry_price'] + stop_distance:
                     triggered_action = 'stop_loss'
 
