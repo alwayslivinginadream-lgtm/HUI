@@ -5288,6 +5288,15 @@ class UltimateGridStrategy(threading.Thread):
                     self.log_msg("已有持仓，禁止重复加仓（可在allow_scale_in开启后允许）", "WARNING")
                     self.last_scalein_log_ts = now_ts
                 return False
+            # ====== 挂单去重：已有未成交限价单时不再重复下单 ======
+            if (not bool(self.config.get("allow_scale_in", False))):
+                with self.pending_orders_lock:
+                    if len(self.pending_orders) > 0:
+                        now_ts = time.time()
+                        if now_ts - self.last_scalein_log_ts >= 10:
+                            self.log_msg(f"已有{len(self.pending_orders)}个挂单未成交，等待成交后再说", "WARNING")
+                            self.last_scalein_log_ts = now_ts
+                        return False
             pending_notional = 0.0
             price = self.last_price
             if price <= 0:
@@ -5324,32 +5333,6 @@ class UltimateGridStrategy(threading.Thread):
             if not decision.get("entry_allowed", False):
                 self.log_msg(f"开仓门禁未通过({decision.get('reason', 'unknown')})")
                 return False
-
-            # ====== 手续费覆盖检查：预期利润不够付手续费就不开仓 ======
-            try:
-                _atr_val = getattr(self, 'cached_atr', 0.0)
-                if _atr_val > 0 and safe_price > 0:
-                    # 预期利润 = ATR × tp_mult 的约一半（保守估计）
-                    maker_fee = float(self.config.get("maker_fee", 0.0002))
-                    taker_fee = float(self.config.get("taker_fee", 0.0005))
-                    fee_rate = maker_fee + taker_fee  # 开仓限价+平仓市价
-                    # 最小名义价值
-                    min_notional = max_amount if min_amount > 0 else 0
-                    if is_contract and contract_size > 0:
-                        min_notional = max(min_notional, float(market.get('limits', {}).get('cost', {}).get('min', 0) or 0))
-                    if min_notional > 0:
-                        round_trip_fee = min_notional * fee_rate
-                        # 保守预期利润 = ATR × tp_mult × qty × 0.5（只吃一半行情）
-                        tp_mult_val = float(decision.get("tp_mult", 2.5))
-                        expected_profit = _atr_val * tp_mult_val * qty * contract_size if (is_contract and contract_size > 0) else _atr_val * tp_mult_val * qty
-                        if expected_profit < round_trip_fee * 1.5:
-                            now_ts = time.time()
-                            if now_ts - getattr(self, '_fee_check_log_ts', 0) >= 30:
-                                self.log_msg(f"⚠️ 预期利润({expected_profit:.4f}U)不足以覆盖手续费({round_trip_fee:.4f}U×1.5)，跳过开仓", "WARNING")
-                                self._fee_check_log_ts = now_ts
-                            return False
-            except Exception:
-                pass  # fee check 失败不阻止开仓
             side = decision.get("side")
             if side not in ("buy", "sell"):
                 return False
@@ -5513,6 +5496,28 @@ class UltimateGridStrategy(threading.Thread):
                 if self.scheduler:
                     self.scheduler.cancel_token(decision.get("_order_token", ""))
                 return False
+
+            # ====== 手续费覆盖检查：预期利润不够付手续费就不开仓 ======
+            try:
+                _atr_val = getattr(self, 'cached_atr', 0.0)
+                _fee_price = self.last_price if self.last_price > 0 else price
+                if _atr_val > 0 and _fee_price > 0:
+                    maker_fee = float(self.config.get("maker_fee", 0.0002))
+                    taker_fee = float(self.config.get("taker_fee", 0.0005))
+                    fee_rate = maker_fee + taker_fee
+                    _fee_notional = notional_value if notional_value > 0 else qty * _fee_price
+                    if _fee_notional > 0:
+                        round_trip_fee = _fee_notional * fee_rate
+                        tp_mult_val = float(decision.get("tp_mult", 2.5))
+                        expected_profit = _atr_val * tp_mult_val * qty * (contract_size if is_contract and contract_size > 0 else 1.0)
+                        if expected_profit < round_trip_fee * 1.5:
+                            now_ts = time.time()
+                            if now_ts - getattr(self, '_fee_check_log_ts', 0) >= 30:
+                                self.log_msg(f"⚠️ 预期利润({expected_profit:.4f}U)不足以覆盖手续费({round_trip_fee:.4f}U×1.5)，跳过开仓", "WARNING")
+                                self._fee_check_log_ts = now_ts
+                            return False
+            except Exception:
+                pass
 
             try:
                 reverse_rate = max(0.0, min(0.02, float(self.config.get("reverse_probe_rate", 0.005))))
